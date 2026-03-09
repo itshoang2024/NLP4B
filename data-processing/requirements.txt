@@ -24,6 +24,3 @@ streamlit>=1.37
 # Retrieval / ML (can be skipped at the very beginning if needed)
 faiss-cpu>=1.8.0
 transformers>=4.44
-
-# transnetv2: NOT on PyPI — install separately:
-# pip install git+https://github.com/soCzech/TransNetV2.git#subdirectory=inference

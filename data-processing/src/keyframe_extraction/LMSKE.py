@@ -56,11 +56,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-# Make src modules importable
+# All modules are in the same directory as this script
 _KEYFRAME_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_KEYFRAME_DIR, "extraction"))
-sys.path.insert(0, os.path.join(_KEYFRAME_DIR, "scripts"))
-# Local TransNetV2 PyTorch module (bundled in same directory as this file)
 if _KEYFRAME_DIR not in sys.path:
     sys.path.insert(0, _KEYFRAME_DIR)
 

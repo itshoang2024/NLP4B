@@ -39,7 +39,6 @@ artifacts/qc/
 *.npy
 *.npz
 *.pt
-*.pth
 *.faiss
 *.index
 *.parquet

@@ -110,9 +110,15 @@ def download_one_video(
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(str(row["url"]), download=True)
-            ext = info.get("ext", "mp4")
 
-        result["status"] = "ok"
+        # info is None when the video is already in the download archive (skipped by yt-dlp)
+        if info is None:
+            ext = "mp4"
+            result["status"] = "skipped"
+        else:
+            ext = info.get("ext", "mp4")
+            result["status"] = "ok"
+
         result["downloaded_path"] = str(videos_dir / f"{video_id}.{ext}")
 
         if write_info_json:

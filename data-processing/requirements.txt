@@ -25,4 +25,5 @@ streamlit>=1.37
 faiss-cpu>=1.8.0
 transformers>=4.44
 
-transnetv2
+# transnetv2: NOT on PyPI — install separately:
+# pip install git+https://github.com/soCzech/TransNetV2.git#subdirectory=inference

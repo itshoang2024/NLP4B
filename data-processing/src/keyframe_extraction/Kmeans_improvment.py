@@ -10,11 +10,25 @@ def kmeans_silhouette(features):
     # Initialise k and clustering results
     k = sqrt_n
     best_k = k
-    best_clusters = None
     best_avg_silhouette = -1
-
+    
     # Results of the selection of the initial center
     clusters, centers = kmeans_init(features)
+    
+    # Update k to the actual number of clusters found (may be less than sqrt_n if many frames are identical)
+    k = len(centers)
+    best_k = k
+    
+    # Initialize best values to the starting values over clustering in case k <= 2
+    best_clusters = clusters.copy()
+    best_centers = centers.copy()
+    center_indices = []
+    if len(best_centers) > 0:
+        for cluster_center in best_centers:
+            # Handle edge cases where features exactly match cluster_center multiple times
+            matches = np.where((features == cluster_center).all(axis=1))[0]
+            if len(matches) > 0:
+                center_indices.append(matches[0])
 
     # Iterative Procedure
     while k > 2:

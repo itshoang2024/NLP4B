@@ -1,51 +1,34 @@
 import numpy as np
-
+from sklearn.cluster import KMeans
 
 def kmeans_init(data):
     print("In the process of initialising the center")
     n = len(data)
-    # calculate sqrt(n)
     sqrt_n = int(np.sqrt(n))
+    
+    # We cannot create more clusters than the number of unique points
+    unique_data = np.unique(data, axis=0)
+    k_init = min(sqrt_n, len(unique_data))
+    
+    if k_init <= 1:
+        # Degenerate case: all points are identical or empty
+        labels = np.zeros(n, dtype=int)
+        centers = [data[0]] if n > 0 else []
+        return labels, np.array(centers)
+        
+    # Use sklearn KMeans for extremely fast initialization compared to original O(N^3) logic
+    kmeans = KMeans(n_clusters=k_init, init='k-means++', n_init=1, random_state=42)
+    labels = kmeans.fit_predict(data)
+    
+    # The original algorithm expected the centers to be exact data points
     centers = []
-    label = []
-
-    # pick init_center
-    while len(centers) < sqrt_n:
-
-        sse_min = float('inf')
-        for i in range(n):
-            center = centers.copy()
-            if np.any(data[i] != centers):
-                center.append(data[i])
-                center = np.array(center)
-                # print(center)
-                sse = 0.0
-
-                # Cluster operation
-                cluster_labels = np.zeros(len(data)).astype(int)
-                for k in range(len(data)):
-                    distances = [np.sqrt(np.sum((data[k] - cen) ** 2)) for cen in center]
-                    nearest_cluster = np.argmin(distances)
-                    cluster_labels[k] = nearest_cluster
-
-                # Based on the results of the cluster operation,calculate sse
-                for j in range(len(center)):
-                    # Get the data points of the jth cluster
-                    cluster_points = []
-                    for l in range(len(cluster_labels)):
-                        if cluster_labels[l] == j:
-                            cluster_points.append(data[l])
-                    singe_sse = 0.0
-                    for point in cluster_points:
-                        squared_errors = np.linalg.norm(point - center[j])
-                        singe_sse += squared_errors
-                    sse += singe_sse
-
-                if sse < sse_min:
-                    sse_min = sse
-                    join_center = data[i]
-                    label = cluster_labels.copy()
-
-        centers.append(join_center)
-
-    return np.array(label), np.array(centers)
+    for i in range(k_init):
+        cluster_samples = data[labels == i]
+        if len(cluster_samples) == 0:
+            continue
+        cluster_mean = kmeans.cluster_centers_[i]
+        # Find the actual point closest to the cluster mean
+        distances = np.linalg.norm(cluster_samples - cluster_mean, axis=1)
+        centers.append(cluster_samples[np.argmin(distances)])
+    
+    return labels, np.array(centers)

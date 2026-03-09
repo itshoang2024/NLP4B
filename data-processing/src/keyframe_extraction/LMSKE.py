@@ -104,7 +104,45 @@ def parse_args():
     return parser.parse_args()
 
 
-# ── 3. Step 1: Resolve video source ──────────────────────────────────────────
+def ensure_h264(video_path: str, tmp_dir: str) -> str:
+    """Check if video is AV1. If so, convert to H.264 to avoid OpenCV decode errors."""
+    import subprocess
+    import json
+    try:
+        cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_streams", "-select_streams", "v:0", video_path
+        ]
+        out = subprocess.check_output(cmd).decode('utf-8')
+        info = json.loads(out)
+        codec = info['streams'][0]['codec_name']
+    except Exception as e:
+        print(f"[LMSKE] Warning: Could not detect codec via ffprobe ({e}). Proceeding as-is.")
+        return video_path
+        
+    print(f"[LMSKE] Detected video codec: {codec}")
+    if codec.lower() in ['av1', 'av01']:
+        print(f"[LMSKE] Codec {codec} is known to cause OpenCV hangs/errors.")
+        print("[LMSKE] Re-encoding video to H.264 (this may take a few minutes) ...")
+        out_path = os.path.join(tmp_dir, os.path.basename(video_path) + ".h264.mp4")
+        if os.path.exists(out_path):
+            print(f"[LMSKE] Cached H.264 video found -> {out_path}")
+            return out_path
+            
+        convert_cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vf", "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+            "-c:a", "copy", out_path
+        ]
+        subprocess.check_call(convert_cmd)
+        print(f"[LMSKE] Re-encoding complete -> {out_path}")
+        return out_path
+    
+    return video_path
+
+
+# ── 3b. Step 1: Resolve video source ─────────────────────────────────────────
 def _is_gdrive_url(url: str) -> bool:
     return "drive.google.com" in url
 
@@ -144,7 +182,7 @@ def resolve_video(video_source: str, save_dir: str) -> str:
     import yt_dlp  # pylint: disable=import-outside-toplevel
 
     ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": "bestvideo[vcodec^=avc][ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
         "outtmpl": os.path.join(save_dir, "%(id)s.%(ext)s"),
         "quiet": False,
         "merge_output_format": "mp4",
@@ -237,7 +275,18 @@ def extract_clip_features(
             img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             inputs = processor(images=img, return_tensors="pt").to(device)
             with torch.no_grad():
-                feat = model.get_image_features(**inputs)  # (1, 768)
+                out = model.get_image_features(**inputs)
+                # Handle different transformers versions:
+                #  - older: returns a plain Tensor
+                #  - newer: may return BaseModelOutputWithPooling
+                if isinstance(out, torch.Tensor):
+                    feat = out
+                elif hasattr(out, "image_embeds"):
+                    feat = out.image_embeds
+                elif hasattr(out, "pooler_output"):
+                    feat = out.pooler_output
+                else:
+                    feat = out[0]  # fallback: first element
                 feat = feat.float().cpu().numpy().flatten()  # (768,)
             sampled_vectors[fid] = feat
 
@@ -339,6 +388,9 @@ def main():
     print("\n[LMSKE] ══ Step 1/5: Resolving video source ══")
     video_path = resolve_video(args.video, tmp_dir)
 
+    # ── Verify and transcode AV1 videos if needed ─────────────────────────────
+    video_path = ensure_h264(video_path, tmp_dir)
+
     # video_id = name of the original input (file/URL), without extension
     raw_name = os.path.basename(args.video.rstrip("/"))  # works for paths & URLs
     video_id = os.path.splitext(raw_name)[0] or "video"
@@ -351,21 +403,37 @@ def main():
     scenes_txt = os.path.join(video_out_dir, f"{video_id}_scenes.txt")  # saved with frames
     features_pkl = os.path.join(tmp_dir, f"{video_id}_features.pkl")
 
-    # ── Step 2: Shot segmentation ─────────────────────────────────────────────
+    # ── Step 2: Shot segmentation (skip if cached) ─────────────────────────────
     print("\n[LMSKE] ══ Step 2/5: Shot segmentation (TransNetV2) ══")
-    shots = run_shot_segmentation(video_path, scenes_txt)
+    if os.path.isfile(scenes_txt):
+        print(f"[LMSKE] ⏩ Cached scenes file found → {scenes_txt}, skipping TransNetV2")
+        shots = []
+        with open(scenes_txt) as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) == 2:
+                    shots.append((int(parts[0]), int(parts[1])))
+        print(f"[LMSKE] Loaded {len(shots)} shots from cache")
+    else:
+        shots = run_shot_segmentation(video_path, scenes_txt)
 
-    # ── Step 3: CLIP feature extraction ──────────────────────────────────────
+    # ── Step 3: CLIP feature extraction (skip if cached) ─────────────────────
     print(
         f"\n[LMSKE] ══ Step 3/5: Feature extraction (CLIP, "
         f"max {args.max_frames_per_shot} frames/shot) ══"
     )
-    features = extract_clip_features(
-        video_path=video_path,
-        shots=shots,
-        features_pkl_path=features_pkl,
-        max_frames_per_shot=args.max_frames_per_shot,
-    )
+    if os.path.isfile(features_pkl):
+        print(f"[LMSKE] ⏩ Cached features found → {features_pkl}, skipping CLIP")
+        with open(features_pkl, "rb") as f:
+            features = pickle.load(f)
+        print(f"[LMSKE] Loaded features shape={features.shape}")
+    else:
+        features = extract_clip_features(
+            video_path=video_path,
+            shots=shots,
+            features_pkl_path=features_pkl,
+            max_frames_per_shot=args.max_frames_per_shot,
+        )
 
     # ── Step 4+5: Clustering + redundancy ────────────────────────────────────
     print("\n[LMSKE] ══ Step 4/5: Clustering + Redundancy elimination ══")

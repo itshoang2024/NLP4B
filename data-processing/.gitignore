@@ -62,6 +62,9 @@ qc_reports/
 videos/
 info_json/
 downloaded_videos/
+notebook/
+templates/
+scripts/
 
 # Notebook outputs / misc
 *.out

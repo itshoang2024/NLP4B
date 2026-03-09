@@ -28,10 +28,7 @@ import subprocess, sys
 def _pip(*pkgs):
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *pkgs])
 
-try:
-    import transnetv2  # noqa: F401
-except ImportError:
-    _pip("transnetv2")
+# transnetv2_pytorch is bundled locally — no pip install needed
 
 try:
     from transformers import CLIPModel, CLIPProcessor  # noqa: F401
@@ -63,6 +60,10 @@ from PIL import Image
 _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_REPO_ROOT, "src", "extraction"))
 sys.path.insert(0, os.path.join(_REPO_ROOT, "src", "scripts"))
+# Local TransNetV2 PyTorch module (bundled in same directory as this file)
+_KEYFRAME_DIR = os.path.dirname(os.path.abspath(__file__))
+if _KEYFRAME_DIR not in sys.path:
+    sys.path.insert(0, _KEYFRAME_DIR)
 
 from Kmeans_improvment import kmeans_silhouette  # noqa: E402
 from Redundancy import redundancy                # noqa: E402
@@ -169,9 +170,9 @@ def run_shot_segmentation(video_path: str, scenes_txt_path: str) -> list[tuple[i
     Also writes results to scenes_txt_path in the original format expected by
     Keyframe_extraction.py (pairs of ints, one pair per line).
     """
-    from transnetv2 import TransNetV2  # pylint: disable=import-outside-toplevel
+    from transnetv2_pytorch.inference import TransNetV2Torch  # pylint: disable=import-outside-toplevel
 
-    model = TransNetV2()
+    model = TransNetV2Torch()
     video_frames, single_frame_predictions, all_frame_predictions = (
         model.predict_video(video_path)
     )

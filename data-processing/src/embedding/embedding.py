@@ -157,39 +157,37 @@ def embed_image(
 
         # Generate embedding
         with torch.no_grad():
-            outputs = model.get_image_features(**inputs)
-
-            # outputs is BaseModelOutputWithPooling object
-            # Extract the actual embedding tensor
-            if hasattr(outputs, 'last_hidden_state'):
-                # SigLIP stores embeddings in last_hidden_state
-                embedding_tensor = outputs.last_hidden_state
-            elif hasattr(outputs, 'image_embeds'):
-                # Alternative: direct image embeddings
-                embedding_tensor = outputs.image_embeds
+            if hasattr(model, "get_image_features"):
+                outputs = model.get_image_features(**inputs)
             else:
-                # Fallback: try indexing (in case it's tuple-like)
-                embedding_tensor = outputs[0]
+                outputs = model(**inputs)
 
-            # Convert to numpy and flatten
-            embedding = embedding_tensor.cpu().numpy().flatten().astype("float32")
+            # Extract the actual tensor representing the image
+            if isinstance(outputs, torch.Tensor):
+                features = outputs
+            elif hasattr(outputs, "image_embeds") and outputs.image_embeds is not None:
+                features = outputs.image_embeds
+            elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+                features = outputs.pooler_output
+            elif hasattr(outputs, "last_hidden_state") and outputs.last_hidden_state is not None:
+                # Shape: (batch, seq_len, hidden_dim). Pool over patches.
+                features = outputs.last_hidden_state.mean(dim=1)
+            else:
+                # Tuple fallback, likely last_hidden_state is index 0
+                features = outputs[0]
+                if getattr(features, "ndim", 0) == 3:
+                    features = features.mean(dim=1)
+                elif getattr(features, "ndim", 0) == 4:
+                    features = features.mean(dim=(2, 3))
 
-            # Validate and reshape if needed
-            if embedding.shape[0] != 1152:
+            # Ensure we get a 1D numpy array of shape (1152,)
+            # features[0] unpacks from the batch dimension.
+            embedding = features[0].cpu().numpy().flatten().astype("float32")
+            
+            if len(embedding) != 1152:
                 logger.warning(
-                    f"Unexpected embedding shape for {image_path.name}: {embedding.shape}"
+                    f"  ⚠️  Unexpected feature shape for {image_path.name}: {embedding.shape}"
                 )
-                # Try to reshape (e.g., 1152*27*27 -> global average)
-                if embedding.shape[0] == 1152 * 27 * 27:
-                    embedding = embedding.reshape(1152, 27, 27).mean(axis=(1, 2))
-                elif embedding.shape[0] % 1152 == 0:
-                    embedding = embedding.reshape(1152, -1).mean(axis=1)
-                else:
-                    # Truncate or pad
-                    if embedding.shape[0] > 1152:
-                        embedding = embedding[:1152]
-                    else:
-                        embedding = np.pad(embedding, (0, 1152 - embedding.shape[0]))
 
             return embedding
 

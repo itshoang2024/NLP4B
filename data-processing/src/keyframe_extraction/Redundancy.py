@@ -77,4 +77,4 @@ def redundancy(video_path, keyframe_index, threshold):
     print(final_index)
 
     return final_index
-
+    

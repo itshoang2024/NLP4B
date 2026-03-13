@@ -454,10 +454,9 @@ def main():
     )
 
     print(
-        f"\n[LMSKE] ✅ Done! {len(keyframe_index)} keyframes → "
+        f"\n[LMSKE] ✓ Done! {len(keyframe_index)} keyframes → "
         f"{os.path.join(args.output_dir, video_id)}/"
     )
-
 
 if __name__ == "__main__":
     main()

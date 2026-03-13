@@ -3,9 +3,10 @@ from __future__ import annotations
 """
 main.py — Download videos and extract metadata in a single pipeline step.
 
-Combines the logic of:
-  - scripts/run_download.py  (Step 1: manifest, Step 2: download)
-  - scripts/run_metadata.py  (Step 3: ffprobe metadata extraction)
+Logic:
+  - Step 1: manifest
+  - Step 2: download
+  - Step 3: ffprobe metadata extraction
 
 Usage example:
     python -m src.download.main \
@@ -48,7 +49,7 @@ def parse_args() -> argparse.Namespace:
         )
     )
 
-    # --- Download args (mirrors run_download.py) ---
+    # --- Download args ---
     download_group = parser.add_argument_group("Download options")
     download_group.add_argument(
         "--input-excel",
@@ -105,7 +106,7 @@ def parse_args() -> argparse.Namespace:
         help="Drop duplicate video_id rows before downloading.",
     )
 
-    # --- Metadata args (mirrors run_metadata.py) ---
+    # --- Metadata args ---
     meta_group = parser.add_argument_group("Metadata options")
     meta_group.add_argument(
         "--video-metadata-output",

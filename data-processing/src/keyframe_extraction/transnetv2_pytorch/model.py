@@ -4,9 +4,7 @@ import torch.nn.functional as functional
 
 import random
 
-
 class TransNetV2(nn.Module):
-
     def __init__(self,
                  F=16, L=3, S=2, D=1024,
                  use_many_hot_targets=True,
@@ -88,7 +86,6 @@ class TransNetV2(nn.Module):
 
 
 class StackedDDCNNV2(nn.Module):
-
     def __init__(self,
                  in_filters,
                  n_blocks,
@@ -142,7 +139,6 @@ class StackedDDCNNV2(nn.Module):
 
 
 class DilatedDCNNV2(nn.Module):
-
     def __init__(self,
                  in_filters,
                  filters,
@@ -182,7 +178,6 @@ class DilatedDCNNV2(nn.Module):
 
 
 class Conv3DConfigurable(nn.Module):
-
     def __init__(self,
                  in_filters,
                  filters,
@@ -220,7 +215,6 @@ class Conv3DConfigurable(nn.Module):
 
 
 class FrameSimilarity(nn.Module):
-
     def __init__(self,
                  in_filters,
                  similarity_dim=128,
@@ -262,7 +256,6 @@ class FrameSimilarity(nn.Module):
 
 
 class ColorHistograms(nn.Module):
-
     def __init__(self,
                  lookup_window=101,
                  output_dim=None):

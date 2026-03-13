@@ -6,7 +6,6 @@ from Kmeans_improvment import kmeans_silhouette
 from save_keyframe import save_frames
 from Redundancy import redundancy
 
-
 def scen_keyframe_extraction(scenes_path, features_path, video_path, save_path, folder_path):
     # Get lens segmentation data
     number_list = []

@@ -2,7 +2,6 @@ import copy
 import cv2
 import numpy as np
 
-
 def evaluation(keyframe_center, test_index, video_path):
     def color_histogram(img):
         hist = cv2.calcHist([img], [0, 1, 2], None, [8, 8, 8], [0, 255, 0, 255, 0, 255])

@@ -3,7 +3,6 @@ from sklearn.metrics import silhouette_score
 from scipy.spatial.distance import cdist
 from init_center import kmeans_init
 
-
 def kmeans_silhouette(features):
     # calculate sqrt(n)
     sqrt_n = int(np.sqrt(len(features)))
@@ -93,4 +92,3 @@ def kmeans_silhouette(features):
     # print("best_center_index:" + str(center_indices))
 
     return best_clusters, best_centers, best_k, center_indices
-

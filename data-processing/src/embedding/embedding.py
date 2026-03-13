@@ -240,6 +240,7 @@ def main():
     failed = 0
     failed_images = []
     video_embeddings = []
+    frame_indices = []
 
     for image_path in tqdm(images, desc="Embedding keyframes"):
         # Generate embedding
@@ -250,7 +251,14 @@ def main():
             failed_images.append(image_path.name)
             continue
             
+        # Parse frame_idx from filename (e.g. videoID_113459.jpg -> 113459)
+        try:
+            frame_idx = int(image_path.stem.split("_")[-1])
+        except ValueError:
+            frame_idx = image_path.stem
+            
         video_embeddings.append(embedding)
+        frame_indices.append(frame_idx)
         successful += 1
 
     # Save aggregated embeddings
@@ -267,7 +275,12 @@ def main():
         
         save_success = save_embedding(final_embedding, output_path)
         if save_success:
+            import json
+            indices_path = output_dir / f"{video_id}_frames.json"
+            with open(indices_path, "w", encoding="utf-8") as f:
+                json.dump(frame_indices, f)
             logger.info(f"Successfully saved {len(video_embeddings)} keyframe features to {output_filename} with shape {final_embedding.shape}")
+            logger.info(f"Successfully saved frame indices mapping to {indices_path.name}")
         else:
             logger.error(f"Failed to save {output_filename}")
     else:

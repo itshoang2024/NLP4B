@@ -127,12 +127,24 @@ def main():
                 continue
                 
             num_frames = emb.shape[0]
+            
+            # Try to load corresponding frame indices mapping
+            indices_file = npy_file.with_name(f"{video_id}_frames.json")
+            if indices_file.exists():
+                with open(indices_file, "r", encoding="utf-8") as f:
+                    frame_indices = json.load(f)
+                if len(frame_indices) != num_frames:
+                    logger.warning(f"Mismatch in frame indices length for {video_id}, falling back to sequential.")
+                    frame_indices = list(range(num_frames))
+            else:
+                frame_indices = list(range(num_frames))
+                
             # Build id-to-metadata mapping
             for i in range(num_frames):
                 mapping.append({
                     "faiss_id": global_id + i,
                     "video_id": video_id, 
-                    "frame_idx": i
+                    "frame_idx": frame_indices[i]
                 })
                 
             all_embeddings.append(emb)

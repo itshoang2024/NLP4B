@@ -61,12 +61,6 @@ def parse_args():
         default="./faiss_index",
         help="Directory to save the FAISS index and mapping (default: ./faiss_index)",
     )
-    parser.add_argument(
-        "--normalize",
-        action="store_true",
-        default=True,
-        help="L2-normalize vectors before indexing (recommended for SigLIP/CLIP with cosine similarity)",
-    )
     return parser.parse_args()
 
 
@@ -100,7 +94,6 @@ def main():
     logger.info("═" * 60)
     logger.info(f"Input directory:  {input_dir}")
     logger.info(f"Output directory: {output_dir}")
-    logger.info(f"Normalize vecs:   {args.normalize}")
     
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -138,23 +131,13 @@ def main():
                 
             # L2 normalize chunk if needed before adding
             emb_float32 = emb.astype("float32")
-            if args.normalize:
-                # Use numpy for L2 normalization robustly
-                norms = np.linalg.norm(emb_float32, axis=1, keepdims=True)
-                # Avoid division by zero
-                norms[norms == 0] = 1.0
-                emb_float32 = emb_float32 / norms
                 
             # If index is not created yet, initialize it based on the first vector dimension
             if index is None:
                 dim = emb_float32.shape[1]
                 logger.info(f"\n[Step 2/3] Initializing FAISS Index (Dim: {dim})...")
-                if args.normalize:
-                    logger.info("Normalizing vectors for Cosine Similarity (using IndexFlatIP)...")
-                    index = faiss.IndexFlatIP(dim)
-                else:
-                    logger.info("Using L2 Distance (using IndexFlatL2)...")
-                    index = faiss.IndexFlatL2(dim)
+                logger.info("Using inner product (Cosine Sim) via IndexFlatIP...")
+                index = faiss.IndexFlatIP(dim)
                     
             index.add(emb_float32)
             global_id += num_frames

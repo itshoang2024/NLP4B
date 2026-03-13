@@ -158,15 +158,37 @@ def embed_image(
         with torch.no_grad():
             outputs = model.get_image_features(**inputs)
 
-            # If the output is a 3D tensor of spatial patches (batch, num_patches, hidden_size)
-            # We must pool it to (batch, hidden_size) by taking the mean across patches.
-            if hasattr(outputs, "ndim") and outputs.ndim == 3:
+            # Handle different output shapes from SigLIP model
+            # Possible shapes: (batch, 1152), (batch, 1152, H, W), (batch, H, W, 1152), etc.
+
+            # If 4D tensor (e.g., batch, channels, height, width), pool spatial dims
+            if hasattr(outputs, "ndim") and outputs.ndim == 4:
+                # Mean pool over spatial dimensions (height, width)
+                outputs = outputs.mean(dim=(2, 3))
+
+            # If 3D tensor (e.g., batch, num_patches, hidden_size), pool patch dimension
+            elif hasattr(outputs, "ndim") and outputs.ndim == 3:
                 outputs = outputs.mean(dim=1)
 
-            # SigLIP returns image features directly
-            embedding = outputs[0].cpu().numpy().flatten()  # (1152,)
+            # Extract first batch item and convert to numpy
+            embedding = outputs[0].cpu().numpy()
 
-        return embedding
+            # Ensure 1D shape (1152,)
+            if embedding.ndim > 1:
+                embedding = embedding.flatten()
+
+            # Validate shape
+            if embedding.shape[0] != 1152:
+                logger.warning(
+                    f"  Unexpected embedding shape for {image_path.name}: {embedding.shape}, expected (1152,)"
+                )
+                # If shape is (1152*N,), try to take first 1152 dims
+                # Or reshape if it's clearly wrong
+                if embedding.shape[0] > 1152:
+                    logger.warning(f"  Truncating to first 1152 dimensions")
+                    embedding = embedding[:1152]
+
+            return embedding.astype("float32")
     except Exception as e:
         logger.warning(f"Failed to embed {image_path.name}: {e}")
         return None

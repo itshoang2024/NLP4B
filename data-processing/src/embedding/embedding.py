@@ -1,29 +1,22 @@
 """
-embedding.py — SigLIP Keyframe Embedding Pipeline (Memory-Optimized)
-====================================================================
+embedding.py — SigLIP Keyframe Embedding Pipeline
+===================================================
 Encode keyframes extracted by LMSKE.py using Google's SigLIP model.
-Optimized for handling large numbers of keyframes on low-RAM systems (e.g., Google Colab).
 
 Full end-to-end pipeline:
   1. Auto-install dependencies
   2. Load SigLIP model (google/siglip-so400m-patch14-384, 1152-dim embeddings)
   3. Discover keyframe images from input directory
-  4. Create memory-mapped output file (preallocated)
-  5. Encode each keyframe to embeddings and write directly to file
-  6. Flush to disk every 1000 embeddings to keep RAM usage low
+  4. Encode each keyframe to embeddings
+  5. Save embeddings as individual .npy files
 
 Usage (Colab):
   !python embedding.py --input_dir "/content/keyframes_output/video_id" --output_dir "/content/embeddings_output"
 
 The output will be saved as `<output_dir>/video_id.npy` with shape (N, 1152), where N is the number of keyframes.
 
-Key advantages:
-  - Constant RAM usage (~10-50MB) regardless of keyframe count
-  - Real-time disk writing (every 1000 embeddings) prevents memory overflow
-  - Suitable for processing 100,000+ keyframes on Colab's 12.7GB RAM limit
-
 Optional performance tuning:
-  --batch_size 32 (default: 1, for GPU inference speedup)
+  --batch_size 32 (default: 1, increase for GPU to speed up processing)
 """
 
 # ── 0. Auto-install dependencies (Colab-friendly) ─────────────────────────────
@@ -196,6 +189,21 @@ def embed_image(
         return None
 
 
+def save_embedding(embedding: np.ndarray, output_path: Path) -> bool:
+    """
+    Save embeddings as a single .npy file.
+    embedding should have shape (N, 1152)
+    Returns True if successful, False otherwise.
+    """
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(output_path, embedding)
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to save embeddings to {output_path}: {e}")
+        return False
+
+
 # ── 5. Main embedding pipeline ─────────────────────────────────────────────────
 def main():
     args = parse_args()
@@ -205,74 +213,65 @@ def main():
     output_dir = Path(args.output_dir)
 
     logger.info("═" * 60)
-    logger.info("SigLIP Keyframe Embedding Pipeline (Batch-optimized for low RAM)")
+    logger.info("SigLIP Keyframe Embedding Pipeline")
     logger.info("═" * 60)
     logger.info(f"Input directory:  {input_dir}")
     logger.info(f"Output directory: {output_dir}")
-    logger.info(f"Batch save size:  1000 embeddings per batch")
+    logger.info(f"Batch size:       {args.batch_size}")
 
     # Setup device
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Device: {device}")
 
     # Step 1: Discover images
-    logger.info("\n[Step 1/4] Discovering keyframe images...")
+    logger.info("\n[Step 1/3] Discovering keyframe images...")
     images = discover_images(input_dir)
 
     # Step 2: Load model
-    logger.info("\n[Step 2/4] Loading SigLIP model...")
+    logger.info("\n[Step 2/3] Loading SigLIP model...")
     model, processor = load_model(device)
 
-    # Step 3: Setup output file with memory-mapped array
-    logger.info("\n[Step 3/4] Initializing memory-mapped output file...")
+    # Step 3: Embed keyframes
+    logger.info("\n[Step 3/3] Encoding keyframes...")
     output_dir.mkdir(parents=True, exist_ok=True)
-    video_id = input_dir.name
-    output_filename = f"{video_id}.npy"
-    output_path = output_dir / output_filename
 
-    # Create memmap: (num_keyframes, 1152) float32
-    num_keyframes = len(images)
-    embedding_dim = 1152
-    memmap_array = np.lib.format.open_memmap(
-        output_path, dtype="float32", mode="w+", shape=(num_keyframes, embedding_dim)
-    )
-    logger.info(
-        f"Created memory-mapped file for {num_keyframes} embeddings ({num_keyframes * embedding_dim * 4 / 1e6:.1f} MB)"
-    )
-
-    # Step 4: Embed keyframes and save in batches
-    logger.info("\n[Step 4/4] Encoding and saving keyframes in batches...")
     start_time = time.time()
     successful = 0
     failed = 0
     failed_images = []
-    batch_size_save = 1000  # Save every 1000 embeddings
+    video_embeddings = []
 
-    for idx, image_path in enumerate(tqdm(images, desc="Embedding keyframes")):
+    for image_path in tqdm(images, desc="Embedding keyframes"):
         # Generate embedding
         embedding = embed_image(image_path, model, processor, device)
 
         if embedding is None:
             failed += 1
             failed_images.append(image_path.name)
-            # Save placeholder NaN for failed embeddings (to keep array index aligned)
-            memmap_array[idx] = np.full(embedding_dim, np.nan, dtype="float32")
             continue
-
-        # Write directly to memmap
-        memmap_array[idx] = embedding
+            
+        video_embeddings.append(embedding)
         successful += 1
 
-        # Flush to disk every batch_size_save embeddings
-        if (idx + 1) % batch_size_save == 0:
-            memmap_array.flush()
-            logger.info(
-                f"  ✓ Saved {idx + 1}/{num_keyframes} embeddings to disk ({(idx + 1) * embedding_dim * 4 / 1e6:.1f} MB written)"
-            )
-
-    # Final flush to ensure all data is written
-    memmap_array.flush()
-    logger.info(f"  ✓ Final flush: all {num_keyframes} embeddings saved to disk")
+    # Save aggregated embeddings
+    save_success = False
+    output_path = None
+    if video_embeddings:
+        # Determine video_id from the input directory name
+        video_id = input_dir.name
+        output_filename = f"{video_id}.npy"
+        output_path = output_dir / output_filename
+        
+        # Stack all embeddings into shape (N, 1152)
+        final_embedding = np.stack(video_embeddings)
+        
+        save_success = save_embedding(final_embedding, output_path)
+        if save_success:
+            logger.info(f"Successfully saved {len(video_embeddings)} keyframe features to {output_filename} with shape {final_embedding.shape}")
+        else:
+            logger.error(f"Failed to save {output_filename}")
+    else:
+        logger.warning("No embeddings generated, nothing to save.")
 
     elapsed = time.time() - start_time
 
@@ -281,24 +280,22 @@ def main():
     logger.info("Embedding Complete!")
     logger.info("═" * 60)
     logger.info(f"Total keyframes:     {len(images)}")
-    logger.info(f"Successfully encoded: {successful}")
+    logger.info(f"Successfully encoded:{successful}")
     logger.info(f"Failed to encode:    {failed}")
     logger.info(
         f"Processing time:     {elapsed:.2f}s ({elapsed/len(images):.3f}s per frame)"
     )
-    logger.info(f"Output saved to:     {output_path}")
-    logger.info(f"Output shape:        {(num_keyframes, embedding_dim)}")
-    logger.info(
-        f"Memory footprint:    File-based (≤10MB RAM vs. {num_keyframes * embedding_dim * 4 / 1e6:.1f}MB full buffer)"
-    )
+    if video_embeddings and save_success:
+        logger.info(f"Output saved to:     {output_path}")
+    else:
+        logger.info(f"Output directory:    {output_dir}/")
 
     if failed > 0:
-        logger.warning(f"\n⚠️  Failed to process {len(failed_images)} image(s):")
+        logger.warning(f"\nFailed to process {len(failed_images)} image(s):")
         for fname in failed_images[:5]:  # Show first 5
             logger.warning(f"  - {fname}")
         if len(failed_images) > 5:
             logger.warning(f"  ... and {len(failed_images) - 5} more")
-        logger.info(f"\nNote: Failed embeddings are saved as NaN in the output file.")
 
 
 if __name__ == "__main__":

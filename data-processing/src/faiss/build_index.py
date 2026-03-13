@@ -31,7 +31,6 @@ except ImportError:
 
 # ── 1. Standard imports ────────────────────────────────────────────────────────
 import argparse
-import json
 import logging
 import os
 import time
@@ -39,6 +38,7 @@ from pathlib import Path
 from typing import Union
 
 import numpy as np
+import pandas as pd
 from tqdm.auto import tqdm
 
 # ── 2. Setup logging ───────────────────────────────────────────────────────────
@@ -64,26 +64,7 @@ def parse_args():
     return parser.parse_args()
 
 
-# ── 4. Helper functions ────────────────────────────────────────────────────────
-def discover_npy_files(input_dir: PathLike) -> list[Path]:
-    """
-    Discover all .npy files in the input directory.
-    Returns sorted list of file paths.
-    """
-    input_dir = Path(input_dir)
-    if not input_dir.is_dir():
-        raise FileNotFoundError(f"Input directory not found: {input_dir}")
-
-    files = sorted([f for f in input_dir.iterdir() if f.is_file() and f.suffix.lower() == ".npy"])
-    
-    if not files:
-        raise ValueError(f"No .npy files found in {input_dir}")
-        
-    logger.info(f"Found {len(files)} .npy files in {input_dir}")
-    return files
-
-
-# ── 5. Main Indexing Pipeline ─────────────────────────────────────────────────
+# ── 4. Main Indexing Pipeline ─────────────────────────────────────────────────
 def main():
     args = parse_args()
     input_dir = Path(args.input_dir)
@@ -98,26 +79,31 @@ def main():
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Step 1: Discover numpy files
-    try:
-        npy_files = discover_npy_files(input_dir)
-    except Exception as e:
-        logger.error(f"Failed to discover mapping files: {e}")
+    if not input_dir.is_dir():
+        logger.error(f"Input directory not found: {input_dir}")
         sys.exit(1)
+
+    npy_files = sorted([f for f in os.listdir(input_dir) if f.endswith('.npy')])
     
-    mapping = []  # FAISS row index -> metadata mapping
+    if len(npy_files) == 0:
+        logger.error(f"No .npy files found in {input_dir}")
+        sys.exit(1)
+        
+    logger.info(f"Found {len(npy_files)} .npy files")
+    
+    embedding = []
+    mapping = []
     global_id = 0
-    index = None
     start_time = time.time()
     
     logger.info("\n[Step 1/3] Loading embeddings and building mapping...")
     for npy_file in tqdm(npy_files, desc="Loading .npy files"):
         try:
-            video_id = npy_file.stem  # the file name without .npy
-            emb = np.load(npy_file)
+            video_name = os.path.splitext(npy_file)[0]
+            emb = np.load(input_dir / npy_file)
             
             if emb.ndim != 2:
-                logger.warning(f"Skipping {npy_file.name}: invalid shape {emb.shape}, expected 2D array.")
+                logger.warning(f"Skipping {npy_file}: invalid shape {emb.shape}")
                 continue
                 
             num_frames = emb.shape[0]
@@ -125,47 +111,46 @@ def main():
             for i in range(num_frames):
                 mapping.append({
                     "faiss_id": global_id + i,
-                    "video_id": video_id, 
+                    "video_id": video_name, 
                     "frame_idx": i
                 })
                 
-            # L2 normalize chunk if needed before adding
-            emb_float32 = emb.astype("float32")
-                
-            # If index is not created yet, initialize it based on the first vector dimension
-            if index is None:
-                dim = emb_float32.shape[1]
-                logger.info(f"\n[Step 2/3] Initializing FAISS Index (Dim: {dim})...")
-                logger.info("Using inner product (Cosine Sim) via IndexFlatIP...")
-                
-                cpu_index = faiss.IndexFlatIP(dim)
-                # Attempt to move to GPU
-                try:
-                    res = faiss.StandardGpuResources()
-                    index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
-                    logger.info("Successfully moved FAISS index to GPU.")
-                except AttributeError:
-                    logger.info("GPU faiss not installed or no GPU detected. Falling back to CPU.")
-                    index = cpu_index
-                    
-            index.add(emb_float32)
+            embedding.append(emb)
             global_id += num_frames
-            
-            # Help GC free memory
-            del emb 
-            del emb_float32
         except Exception as e:
-            logger.warning(f"Failed to process {npy_file.name}: {e}")
+            logger.warning(f"Failed to process {npy_file}: {e}")
             
-    if index is None or index.ntotal == 0:
+    if not embedding:
         logger.error("No valid embeddings loaded. Exiting.")
         sys.exit(1)
         
+    # Stack all embeddings together into one giant matrix just like the reference code
+    embedding = np.concatenate(embedding, axis=0).astype("float32")
+    mapping_df = pd.DataFrame(mapping)
+    
+    dim = embedding.shape[1]
+    logger.info(f"Total vectors loaded: {embedding.shape[0]}, Dimension: {dim}")
+    
+    # Step 2: Build FAISS index
+    logger.info("\n[Step 2/3] Building FAISS Index...")
+    logger.info("Using inner product (Cosine Sim) via IndexFlatIP...")
+                
+    cpu_index = faiss.IndexFlatIP(dim)
+    # Attempt to move to GPU
+    try:
+        res = faiss.StandardGpuResources()
+        index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+        logger.info("Successfully moved FAISS index to GPU.")
+    except AttributeError:
+        logger.info("GPU faiss not installed or no GPU detected. Falling back to CPU.")
+        index = cpu_index
+        
+    index.add(embedding)
     logger.info(f"Index built successfully with {index.ntotal} vectors.")
     
     # Step 3: Save outputs
     logger.info("\n[Step 3/3] Saving outputs...")
-    index_filename = "keyframe_index.bin"
+    index_filename = "keyframe_index.index"
     index_path = output_dir / index_filename
     
     # Convert GPU index back to CPU before saving (FAISS constraint)
@@ -177,18 +162,17 @@ def main():
     faiss.write_index(cpu_index_to_save, str(index_path))
     logger.info(f"FAISS index saved to {index_path}")
     
-    # Save the mapping (to associate a FAISS search result back to a video and frame)
-    mapping_filename = "index_mapping.json"
+    # Save the mapping as CSV
+    mapping_filename = "keyframe_index_mapping.csv"
     mapping_path = output_dir / mapping_filename
-    with open(mapping_path, "w", encoding="utf-8") as f:
-        json.dump(mapping, f, indent=2)
+    mapping_df.to_csv(str(mapping_path), index=False)
     logger.info(f"Index mapping saved to {mapping_path}")
         
     elapsed = time.time() - start_time
     
     # Summary
     logger.info("\n" + "═" * 60)
-    logger.info("FAISS Indexing Complete!")
+    logger.info("Build FAISS successful!")
     logger.info("═" * 60)
     logger.info(f"Total vectors:     {index.ntotal}")
     logger.info(f"Processing time:   {elapsed:.2f}s")

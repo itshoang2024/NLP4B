@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Union
 
 import numpy as np
+from tqdm.auto import tqdm
 
 # ── 2. Setup logging ───────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="[FAISS] %(levelname)s: %(message)s")
@@ -111,13 +112,13 @@ def main():
         logger.error(f"Failed to discover mapping files: {e}")
         sys.exit(1)
     
-    all_embeddings = []
     mapping = []  # FAISS row index -> metadata mapping
     global_id = 0
+    index = None
     start_time = time.time()
     
     logger.info("\n[Step 1/3] Loading embeddings and building mapping...")
-    for npy_file in npy_files:
+    for npy_file in tqdm(npy_files, desc="Loading .npy files"):
         try:
             video_id = npy_file.stem  # the file name without .npy
             emb = np.load(npy_file)
@@ -135,33 +136,35 @@ def main():
                     "frame_idx": i
                 })
                 
-            all_embeddings.append(emb)
+            # L2 normalize chunk if needed before adding
+            emb_float32 = emb.astype("float32")
+            if args.normalize:
+                faiss.normalize_L2(emb_float32)
+                
+            # If index is not created yet, initialize it based on the first vector dimension
+            if index is None:
+                dim = emb_float32.shape[1]
+                logger.info(f"\n[Step 2/3] Initializing FAISS Index (Dim: {dim})...")
+                if args.normalize:
+                    logger.info("Normalizing vectors for Cosine Similarity (using IndexFlatIP)...")
+                    index = faiss.IndexFlatIP(dim)
+                else:
+                    logger.info("Using L2 Distance (using IndexFlatL2)...")
+                    index = faiss.IndexFlatL2(dim)
+                    
+            index.add(emb_float32)
             global_id += num_frames
+            
+            # Help GC free memory
+            del emb 
+            del emb_float32
         except Exception as e:
             logger.warning(f"Failed to process {npy_file.name}: {e}")
             
-    if not all_embeddings:
+    if index is None or index.ntotal == 0:
         logger.error("No valid embeddings loaded. Exiting.")
         sys.exit(1)
         
-    # Stack all embeddings together into one giant matrix
-    embeddings_matrix = np.vstack(all_embeddings).astype("float32")
-    dim = embeddings_matrix.shape[1]
-    
-    logger.info(f"Total vectors loaded: {embeddings_matrix.shape[0]}, Dimension: {dim}")
-    
-    # Step 2: Build FAISS index
-    logger.info("\n[Step 2/3] Building FAISS Index...")
-    if args.normalize:
-        logger.info("Normalizing vectors for Cosine Similarity (using IndexFlatIP)...")
-        faiss.normalize_L2(embeddings_matrix)
-        index = faiss.IndexFlatIP(dim)
-    else:
-        logger.info("Using L2 Distance (using IndexFlatL2)...")
-        index = faiss.IndexFlatL2(dim)
-        
-    # Add vectors to index
-    index.add(embeddings_matrix)
     logger.info(f"Index built successfully with {index.ntotal} vectors.")
     
     # Step 3: Save outputs

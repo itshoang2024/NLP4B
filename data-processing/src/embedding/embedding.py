@@ -10,11 +10,10 @@ Full end-to-end pipeline:
   4. Encode each keyframe to embeddings
   5. Save embeddings as individual .npy files
 
-Usage (Google Colab — keyframes already extracted):
+Usage (Colab):
   !python embedding.py --input_dir "/content/keyframes_output/video_id" --output_dir "/content/embeddings_output"
 
-Usage (Local):
-  python embedding.py --input_dir "./keyframes_output/video_id" --output_dir "./embeddings_output"
+The output will be saved as `<output_dir>/video_id.npy` with shape (N, 1152), where N is the number of keyframes.
 
 Optional performance tuning:
   --batch_size 32 (default: 1, increase for GPU to speed up processing)
@@ -162,7 +161,8 @@ def embed_image(
 
 def save_embedding(embedding: np.ndarray, output_path: Path) -> bool:
     """
-    Save embedding as .npy file.
+    Save embeddings as a single .npy file.
+    embedding should have shape (N, 1152)
     Returns True if successful, False otherwise.
     """
     try:
@@ -170,7 +170,7 @@ def save_embedding(embedding: np.ndarray, output_path: Path) -> bool:
         np.save(output_path, embedding)
         return True
     except Exception as e:
-        logger.warning(f"Failed to save embedding to {output_path}: {e}")
+        logger.warning(f"Failed to save embeddings to {output_path}: {e}")
         return False
 
 
@@ -209,6 +209,7 @@ def main():
     successful = 0
     failed = 0
     failed_images = []
+    video_embeddings = []
 
     for image_path in tqdm(images, desc="Embedding keyframes"):
         # Generate embedding
@@ -218,16 +219,27 @@ def main():
             failed += 1
             failed_images.append(image_path.name)
             continue
+            
+        video_embeddings.append(embedding)
+        successful += 1
 
-        # Save embedding
-        output_filename = f"{image_path.stem}_embedding.npy"
+    # Save aggregated embeddings
+    if video_embeddings:
+        # Determine video_id from the input directory name
+        video_id = input_dir.name
+        output_filename = f"{video_id}.npy"
         output_path = output_dir / output_filename
-
-        if save_embedding(embedding, output_path):
-            successful += 1
+        
+        # Stack all embeddings into shape (N, 1152)
+        final_embedding = np.stack(video_embeddings)
+        
+        save_success = save_embedding(final_embedding, output_path)
+        if save_success:
+            logger.info(f"Successfully saved {len(video_embeddings)} keyframe features to {output_filename} with shape {final_embedding.shape}")
         else:
-            failed += 1
-            failed_images.append(image_path.name)
+            logger.error(f"Failed to save {output_filename}")
+    else:
+        logger.warning("No embeddings generated, nothing to save.")
 
     elapsed = time.time() - start_time
 
@@ -236,12 +248,15 @@ def main():
     logger.info("Embedding Complete!")
     logger.info("═" * 60)
     logger.info(f"Total keyframes:     {len(images)}")
-    logger.info(f"Successfully saved:  {successful}")
-    logger.info(f"Failed:              {failed}")
+    logger.info(f"Successfully encoded:{successful}")
+    logger.info(f"Failed to encode:    {failed}")
     logger.info(
         f"Processing time:     {elapsed:.2f}s ({elapsed/len(images):.3f}s per frame)"
     )
-    logger.info(f"Output directory:    {output_dir}/")
+    if video_embeddings and save_success:
+        logger.info(f"Output saved to:     {output_path}")
+    else:
+        logger.info(f"Output directory:    {output_dir}/")
 
     if failed > 0:
         logger.warning(f"\nFailed to process {len(failed_images)} image(s):")

@@ -303,14 +303,39 @@ def main():
         # Load embeddings for this video
         embeddings, num_vectors = load_embeddings(npy_file, batch_size=args.batch_size)
 
-        # Filter out NaN embeddings (failed frames from embedding.py)
-        valid_mask = ~np.isnan(embeddings).any(axis=1)
-        valid_count = valid_mask.sum()
-        if valid_count < num_vectors:
+        # Fix embeddings shape if corrupted (e.g., loaded as (N, 839808) instead of (N, 1152))
+        logger.info(f"    Raw embeddings shape: {embeddings.shape}")
+
+        # Check if embeddings got flattened or have wrong second dimension
+        if embeddings.ndim == 2 and embeddings.shape[1] != 1152:
             logger.warning(
-                f"    ⚠️  Filtered {num_vectors - valid_count} NaN vectors (failed embeddings)"
+                f"    ⚠️  Embedding shape {embeddings.shape} != (N, 1152), attempting to reshape..."
             )
-            embeddings = embeddings[valid_mask]
+            # If shape is (N, 839808) where 839808 = 1152*729 or similar
+            if embeddings.shape[1] == 1152 * 27 * 27:  # 839808
+                logger.info(f"    Reshaping spatial features (N, 1152, 27, 27) -> (N, 1152)")
+                embeddings = embeddings.reshape(num_vectors, 1152, 27, 27).mean(axis=(2, 3))
+            elif embeddings.shape[1] % 1152 == 0:
+                # Try to reshape assuming it was concatenated
+                factor = embeddings.shape[1] // 1152
+                logger.info(f"    Dividing {embeddings.shape[1]} dims by {factor}")
+                embeddings = embeddings.reshape(num_vectors, 1152, factor).mean(axis=2)
+            else:
+                # Try to truncate to first 1152 dims or error out
+                logger.warning(f"    Cannot reshape {embeddings.shape} - truncating to (N, 1152)")
+                embeddings = embeddings[:, :1152]
+
+        # Filter out NaN embeddings (failed frames from embedding.py)
+        if embeddings.ndim == 2 and embeddings.shape[1] > 0:
+            valid_mask = ~np.isnan(embeddings).any(axis=1)
+            valid_count = valid_mask.sum()
+            if valid_count < embeddings.shape[0]:
+                logger.warning(
+                    f"    ⚠️  Filtered {embeddings.shape[0] - valid_count} NaN vectors (failed embeddings)"
+                )
+                embeddings = embeddings[valid_mask]
+
+        logger.info(f"    Final embeddings shape: {embeddings.shape}")
 
         # Add embeddings to index
         index.add(embeddings)
@@ -362,5 +387,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
     main()

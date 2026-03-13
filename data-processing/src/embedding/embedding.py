@@ -61,7 +61,7 @@ from tqdm.auto import tqdm
 from transformers import AutoImageProcessor, AutoModel
 
 # ── 2. Setup logging ───────────────────────────────────────────────────────────
-logging.basicConfig(level=logging.DEBUG, format="[Embedding] %(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="[Embedding] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # Type alias for flexible path handling
@@ -145,7 +145,7 @@ def embed_image(
 ) -> Optional[np.ndarray]:
     """
     Load image and generate SigLIP embedding (1152 dims).
-    Handles patch embeddings from spatial features.
+    Handles BaseModelOutputWithPooling from SigLIP.
     Returns numpy array of shape (1152,) or None if failed.
     """
     try:
@@ -159,64 +159,37 @@ def embed_image(
         with torch.no_grad():
             outputs = model.get_image_features(**inputs)
 
-            # Debug: log original shape
-            logger.debug(f"Raw output shape: {outputs.shape}, ndim: {outputs.ndim}")
-
-            # Handle different output shapes from SigLIP model
-            # Possible outputs:
-            # - (batch, hidden_dim, H, W): spatial features
-            # - (batch, num_patches, hidden_dim): patch embeddings
-            # - (batch, hidden_dim): already pooled
-
-            # Case 1: 4D tensor (batch, channels, height, width)
-            if outputs.ndim == 4:
-                # Shape: (1, 1152, 27, 27) -> mean pool spatial dims
-                outputs = outputs.mean(dim=(2, 3))  # -> (1, 1152)
-
-            # Case 2: 3D tensor (batch, num_patches, hidden_dim)
-            elif outputs.ndim == 3:
-                # Check if it is (batch, num_patches, 1152) or (batch, 1152, num_patches)
-                # SigLIP typically returns (1, num_patches, 1152)
-                if outputs.shape[2] == 1152:
-                    # Shape: (1, 729, 1152) -> mean pool patches
-                    outputs = outputs.mean(dim=1)  # -> (1, 1152)
-                else:
-                    # Shape: (1, 1152, 729) -> mean pool last dim or transpose
-                    outputs = outputs.mean(dim=2)  # -> (1, 1152)
-
-            # Case 3: 2D tensor (batch, hidden_dim) - already pooled
-            elif outputs.ndim == 2:
-                pass  # Already correct shape (1, 1152)
-
-            # Case 4: 1D tensor (hidden_dim,) - no batch dimension
-            elif outputs.ndim == 1:
-                outputs = outputs.unsqueeze(0)  # -> (1, 1152)
-
-            # Extract batch[0] and convert to numpy
-            if outputs.ndim >= 2:
-                embedding = outputs[0].cpu().numpy()
+            # outputs is BaseModelOutputWithPooling object
+            # Extract the actual embedding tensor
+            if hasattr(outputs, 'last_hidden_state'):
+                # SigLIP stores embeddings in last_hidden_state
+                embedding_tensor = outputs.last_hidden_state
+            elif hasattr(outputs, 'image_embeds'):
+                # Alternative: direct image embeddings
+                embedding_tensor = outputs.image_embeds
             else:
-                embedding = outputs.cpu().numpy()
+                # Fallback: try indexing (in case it's tuple-like)
+                embedding_tensor = outputs[0]
 
-            # Ensure 1D shape
-            if embedding.ndim > 1:
-                embedding = embedding.mean(axis=tuple(range(1, embedding.ndim)))
+            # Convert to numpy and flatten
+            embedding = embedding_tensor.cpu().numpy().flatten().astype("float32")
 
-            # Final validation
-            embedding = embedding.astype("float32")
+            # Validate and reshape if needed
             if embedding.shape[0] != 1152:
                 logger.warning(
-                    f"  ⚠️  Final shape {embedding.shape} != (1152,) for {image_path.name}"
+                    f"Unexpected embedding shape for {image_path.name}: {embedding.shape}"
                 )
-                # Fallback: reshape spatial features (839808 = 1152*27*27)
-                if embedding.shape[0] == 839808 and 839808 == 1152 * 27 * 27:
-                    logger.info(f"  Reshaping spatial features (1152, 27, 27) → mean pooling...")
+                # Try to reshape (e.g., 1152*27*27 -> global average)
+                if embedding.shape[0] == 1152 * 27 * 27:
                     embedding = embedding.reshape(1152, 27, 27).mean(axis=(1, 2))
-                elif embedding.shape[0] > 1152:
-                    logger.info(f"  Taking mean of {embedding.shape[0]} features...")
+                elif embedding.shape[0] % 1152 == 0:
                     embedding = embedding.reshape(1152, -1).mean(axis=1)
-                elif embedding.shape[0] < 1152:
-                    embedding = np.pad(embedding, (0, 1152 - embedding.shape[0]))
+                else:
+                    # Truncate or pad
+                    if embedding.shape[0] > 1152:
+                        embedding = embedding[:1152]
+                    else:
+                        embedding = np.pad(embedding, (0, 1152 - embedding.shape[0]))
 
             return embedding
 

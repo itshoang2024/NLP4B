@@ -150,9 +150,9 @@ def embed_image(
 
         # Generate embedding
         with torch.no_grad():
-            outputs = model(**inputs)
-            # SigLIP returns image_embeds
-            embedding = outputs.image_embeds[0].cpu().numpy().flatten()  # (1152,)
+            outputs = model.get_image_features(**inputs)
+            # SigLIP returns image features directly
+            embedding = outputs[0].cpu().numpy().flatten()  # (1152,)
 
         return embedding
     except Exception as e:

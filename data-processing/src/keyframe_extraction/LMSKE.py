@@ -362,7 +362,7 @@ def save_keyframes(
     video_id: str,
 ) -> None:
     """
-    Save each keyframe as <output_dir>/<video_id>/<video_id>_00001.jpg, ...
+    Save each keyframe as <output_dir>/<video_id>/<video_id>_<frame_index>.jpg, ...
     Calls save_frames from src/scripts/save_keyframe.py with a custom prefix.
     """
     save_frames(

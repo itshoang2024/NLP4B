@@ -139,7 +139,11 @@ def main():
             # L2 normalize chunk if needed before adding
             emb_float32 = emb.astype("float32")
             if args.normalize:
-                faiss.normalize_L2(emb_float32)
+                # Use numpy for L2 normalization robustly
+                norms = np.linalg.norm(emb_float32, axis=1, keepdims=True)
+                # Avoid division by zero
+                norms[norms == 0] = 1.0
+                emb_float32 = emb_float32 / norms
                 
             # If index is not created yet, initialize it based on the first vector dimension
             if index is None:

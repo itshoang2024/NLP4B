@@ -150,6 +150,12 @@ def embed_image(
         # Generate embedding
         with torch.no_grad():
             outputs = model.get_image_features(**inputs)
+            
+            # If the output is a 3D tensor of spatial patches (batch, num_patches, hidden_size)
+            # We must pool it to (batch, hidden_size) by taking the mean across patches.
+            if hasattr(outputs, "ndim") and outputs.ndim == 3:
+                outputs = outputs.mean(dim=1)
+                
             # SigLIP returns image features directly
             embedding = outputs[0].cpu().numpy().flatten()  # (1152,)
 

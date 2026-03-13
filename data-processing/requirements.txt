@@ -23,4 +23,5 @@ streamlit>=1.37
 
 # Retrieval / ML (can be skipped at the very beginning if needed)
 faiss-cpu>=1.8.0
+faiss-gpu>=1.8.0
 transformers>=4.44

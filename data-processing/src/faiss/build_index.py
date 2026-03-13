@@ -1,13 +1,13 @@
 """
-faiss.py — FAISS Vector Indexing Pipeline
+build_index.py — FAISS Vector Indexing Pipeline
 ===================================================
 Load SigLIP embeddings (.npy) and build a FAISS index.
 
 Usage (Google Colab — embeddings already extracted):
-  !python faiss.py --input_dir "/content/embeddings" --output_dir "/content/faiss_index"
+  !python build_index.py --input_dir "/content/embeddings" --output_dir "/content/faiss_index"
 
 Usage (Local):
-  python faiss.py --input_dir "./embeddings_output" --output_dir "./faiss_index"
+  python build_index.py --input_dir "./embeddings_output" --output_dir "./faiss_index"
 """
 
 # ── 0. Auto-install dependencies (Colab-friendly) ─────────────────────────────
@@ -137,7 +137,16 @@ def main():
                 dim = emb_float32.shape[1]
                 logger.info(f"\n[Step 2/3] Initializing FAISS Index (Dim: {dim})...")
                 logger.info("Using inner product (Cosine Sim) via IndexFlatIP...")
-                index = faiss.IndexFlatIP(dim)
+                
+                cpu_index = faiss.IndexFlatIP(dim)
+                # Attempt to move to GPU
+                try:
+                    res = faiss.StandardGpuResources()
+                    index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+                    logger.info("Successfully moved FAISS index to GPU.")
+                except AttributeError:
+                    logger.info("GPU faiss not installed or no GPU detected. Falling back to CPU.")
+                    index = cpu_index
                     
             index.add(emb_float32)
             global_id += num_frames
@@ -159,8 +168,13 @@ def main():
     index_filename = "keyframe_index.bin"
     index_path = output_dir / index_filename
     
-    # Save the FAISS index structure to file
-    faiss.write_index(index, str(index_path))
+    # Convert GPU index back to CPU before saving (FAISS constraint)
+    try:
+        cpu_index_to_save = faiss.index_gpu_to_cpu(index)
+    except AttributeError:
+        cpu_index_to_save = index
+        
+    faiss.write_index(cpu_index_to_save, str(index_path))
     logger.info(f"FAISS index saved to {index_path}")
     
     # Save the mapping (to associate a FAISS search result back to a video and frame)

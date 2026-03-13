@@ -233,7 +233,7 @@ def main():
     # Create memmap: (num_keyframes, 1152) float32
     num_keyframes = len(images)
     embedding_dim = 1152
-    memmap_array = np.memmap(
+    memmap_array = np.lib.format.open_memmap(
         output_path, dtype="float32", mode="w+", shape=(num_keyframes, embedding_dim)
     )
     logger.info(

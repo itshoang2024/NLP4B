@@ -147,6 +147,15 @@ def load_embeddings(npy_file: Path, batch_size: int = 0) -> Tuple[np.ndarray, in
             f"  Loaded {npy_file.name}: {num_vectors} vectors, shape {embeddings.shape}"
         )
         return embeddings.astype("float32"), num_vectors
+    except ValueError as e:
+        if "pickled data" in str(e):
+            logger.error(
+                f"File {npy_file.name} is corrupted or in an old raw binary format. "
+                f"Please re-run embedding.py on {npy_file.stem} to regenerate a valid .npy file."
+            )
+        else:
+            logger.error(f"ValueError loading {npy_file.name}: {e}")
+        raise
     except Exception as e:
         logger.error(f"Failed to load {npy_file.name}: {e}")
         raise

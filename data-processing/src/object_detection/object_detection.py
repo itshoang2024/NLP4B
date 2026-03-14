@@ -1,240 +1,193 @@
-# ============================================================
-#  YOLO Module — Film Retrieval Project
-#  Run: python yolo_pipeline.py
-#  Input:  ./keyframes/   (your JPG/PNG keyframes)
-#  Output: ./yolo_out/    (annotated images + metadata.json)
-# ============================================================
-
-import os, json, glob, cv2, argparse
-import numpy as np
-import matplotlib.pyplot as plt
+import argparse
+import json
+import traceback
 import torch
+from pathlib import Path
+from PIL import Image
+from transformers import AutoProcessor, AutoModelForCausalLM
 from ultralytics import YOLO
 
-# ── CONFIG ───────────────────────────────────────────────────
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description='YOLO Object Detection — Film Retrieval Project'
-    )
-    parser.add_argument('--keyframes-dir', default='./keyframes',
-                        help='Directory containing input keyframe images (default: ./keyframes)')
-    parser.add_argument('--output-dir',    default='./yolo_out',
-                        help='Directory to save annotated images and metadata (default: ./yolo_out)')
-    parser.add_argument('--conf',          type=float, default=0.25,
-                        help='YOLO confidence threshold (default: 0.25)')
-    parser.add_argument('--grid-size',     type=int,   default=7,
-                        help='Grid size for spatial encoding (default: 7)')
-    parser.add_argument('--max-images',    type=int,   default=9999,
-                        help='Max number of images to process (default: all)')
-    parser.add_argument('--model-coco',    default='yolo11n.pt',
-                        help='YOLO COCO model weights file (default: yolo11n.pt)')
-    parser.add_argument('--model-open',    default='yolov8n.pt',
-                        help='YOLO open-vocabulary model weights file (default: yolov8n.pt)')
-    return parser.parse_args()
+# ==========================================
+# 1. HELPER FUNCTIONS 
+# ==========================================
+def calculate_iou(box1, box2):
+    """Calculates Intersection over Union for two bounding boxes [x1, y1, x2, y2]."""
+    x_left = max(box1[0], box2[0])
+    y_top = max(box1[1], box2[1])
+    x_right = min(box1[2], box2[2])
+    y_bottom = min(box1[3], box2[3])
 
-args = parse_args()
+    if x_right < x_left or y_bottom < y_top:
+        return 0.0
 
-KEYFRAMES_DIR  = args.keyframes_dir
-OUTPUT_DIR     = args.output_dir
-CONF_THRESHOLD = args.conf
-GRID_SIZE      = args.grid_size
-MAX_IMAGES     = args.max_images
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+    box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    
+    if box1_area + box2_area - intersection_area == 0:
+        return 0.0
+        
+    return intersection_area / (box1_area + box2_area - intersection_area)
 
-os.makedirs(KEYFRAMES_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR,    exist_ok=True)
+def merge_yolo_and_florence(yolo_objects, florence_objects, iou_threshold=0.75):
+    """Merges YOLO and Florence detections, prioritizing YOLO for tight bounding boxes."""
+    merged_objects = []
+    
+    # Step A: Add all YOLO objects first
+    for y_obj in yolo_objects:
+        merged_objects.append(y_obj)
 
-# ── LOAD MODELS ──────────────────────────────────────────────
-print("🔄 Loading YOLO models...")
-model_coco = YOLO(args.model_coco)
-model_open = YOLO(args.model_open)
+    # Step B: Add Florence objects only if they don't overlap with YOLO
+    for f_obj in florence_objects:
+        is_duplicate = False
+        for m_obj in merged_objects:
+            iou = calculate_iou(f_obj["bbox"], m_obj["bbox"])
+            
+            if iou > iou_threshold:
+                if f_obj["label"].lower() in m_obj["label"].lower() or m_obj["label"].lower() in f_obj["label"].lower():
+                    is_duplicate = True
+                    break
+                elif m_obj["source"] == "yolo" and f_obj["source"] == "dense_region":
+                    m_obj["rich_label"] = f_obj["label"] 
+                    is_duplicate = True 
+                    break
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-print(f"✅ Using device: {DEVICE}\n")
+        if not is_duplicate:
+            merged_objects.append(f_obj)
 
-# ── ENCODING ─────────────────────────────────────────────────
-def get_color(cls_name):
-    h = hash(cls_name)
-    return (h % 200 + 30, (h*3) % 200 + 30, (h*7) % 200 + 30)
+    return merged_objects
 
-def encode_counts(detections):
-    return ' '.join(f"{k}{v}" for k, v in sorted(detections.items()))
+# ==========================================
+# 2. CORE PIPELINE FUNCTION
+# ==========================================
+def process_image_pipeline(image_path_str, yolo_model, florence_model, florence_processor, device, iou_thresh):
+    image_path = Path(image_path_str)
+    pil_image = Image.open(image_path).convert("RGB")
+    
+    # --- YOLO INFERENCE ---
+    yolo_results = yolo_model(image_path_str, verbose=False)
+    yolo_objects = []
+    yolo_tags = set()
+    
+    for result in yolo_results:
+        for i in range(len(result.boxes)):
+            class_id = int(result.boxes.cls[i])
+            label = result.names[class_id]
+            confidence = float(result.boxes.conf[i])
+            bbox_xyxy = result.boxes.xyxy[i].tolist()
+            
+            yolo_tags.add(label)
+            yolo_objects.append({
+                "label": label,
+                "confidence": round(confidence, 2),
+                "bbox": [round(c, 2) for c in bbox_xyxy],
+                "source": "yolo"
+            })
 
-def encode_tags(detections):
-    return sorted(detections.keys())
+    # --- FLORENCE-2 INFERENCE ---
+    florence_tasks = ["<OD>", "<DENSE_REGION_CAPTION>", "<MORE_DETAILED_CAPTION>", "<CAPTION>"]
+    florence_raw_results = {}
+    
+    for task in florence_tasks:
+        inputs = florence_processor(text=task, images=pil_image, return_tensors="pt")
+        inputs['input_ids'] = inputs['input_ids'].to(device).long()
+        inputs['pixel_values'] = inputs['pixel_values'].to(device, torch.float32)
+        
+        with torch.no_grad():
+            generated_ids = florence_model.generate(
+                **inputs, max_new_tokens=200, num_beams=3,
+                pad_token_id=florence_processor.tokenizer.eos_token_id, do_sample=False
+            )
+        raw_text = florence_processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+        parsed = florence_processor.post_process_generation(raw_text, task=task, image_size=(pil_image.width, pil_image.height))
+        florence_raw_results[task] = parsed.get(task, {})
 
-def encode_bbox_string(bboxes):
-    return ' '.join(
-        f"{cls}({nx1:.2f},{ny1:.2f},{nx2:.2f},{ny2:.2f}:{cf:.2f})"
-        for cls, cf, nx1, ny1, nx2, ny2 in bboxes
-    )
+    florence_objects = []
+    if "labels" in florence_raw_results.get("<OD>", {}):
+        for label, bbox in zip(florence_raw_results["<OD>"]["labels"], florence_raw_results["<OD>"]["bboxes"]):
+            florence_objects.append({"label": label, "bbox": [round(c, 2) for c in bbox], "source": "object_detection"})
+            
+    if "labels" in florence_raw_results.get("<DENSE_REGION_CAPTION>", {}):
+        for label, bbox in zip(florence_raw_results["<DENSE_REGION_CAPTION>"]["labels"], florence_raw_results["<DENSE_REGION_CAPTION>"]["bboxes"]):
+            florence_objects.append({"label": label, "bbox": [round(c, 2) for c in bbox], "source": "dense_region"})
 
-def encode_7x7_grid(bboxes, img_w, img_h):
-    ZONE = {
-        (r,c): f"{'top' if r<2 else 'mid' if r<5 else 'bot'}-"
-               f"{'left' if c<2 else 'center' if c<5 else 'right'}"
-        for r in range(GRID_SIZE) for c in range(GRID_SIZE)
+    # --- MERGE & BUILD JSON ---
+    final_merged_objects = merge_yolo_and_florence(yolo_objects, florence_objects, iou_threshold=iou_thresh)
+    all_tags = list(yolo_tags.union(set(florence_raw_results.get("<OD>", {}).get("labels", []))))
+
+    final_json = {
+        "image_id": image_path.stem,
+        "metadata": {
+            "file_path": str(image_path),
+            "width": pil_image.width,
+            "height": pil_image.height,
+        },
+        "global_descriptions": {
+            "tags": sorted(all_tags),
+            "caption": florence_raw_results.get("<CAPTION>", ""),
+            "detailed_caption": florence_raw_results.get("<MORE_DETAILED_CAPTION>", "")
+        },
+        "objects": final_merged_objects
     }
-    grid_cls  = [['empty']*GRID_SIZE for _ in range(GRID_SIZE)]
-    grid_conf = [[0.0]*GRID_SIZE     for _ in range(GRID_SIZE)]
-    cw, ch = img_w/GRID_SIZE, img_h/GRID_SIZE
+    return final_json
 
-    for cls, conf, nx1, ny1, nx2, ny2 in bboxes:
-        cx = ((nx1+nx2)/2) * img_w
-        cy = ((ny1+ny2)/2) * img_h
-        gx = min(int(cx/cw), GRID_SIZE-1)
-        gy = min(int(cy/ch), GRID_SIZE-1)
-        if conf > grid_conf[gy][gx]:
-            grid_cls[gy][gx]  = cls
-            grid_conf[gy][gx] = conf
+# ==========================================
+# 3. BATCH RUNNER
+# ==========================================
+def main():
+    parser = argparse.ArgumentParser(description="Batch Process Images with YOLO and Florence-2")
+    parser.add_argument("-i", "--input_dir", type=str, required=True, help="Path to input directory containing images")
+    parser.add_argument("-o", "--output_dir", type=str, required=True, help="Path to output directory to save JSONs")
+    parser.add_argument("--yolo_model", type=str, default="yolov8s-world.pt", help="Path to YOLO model")
+    parser.add_argument("--florence_model", type=str, default="microsoft/Florence-2-large-ft", help="Florence model ID")
+    parser.add_argument("--iou", type=float, default=0.75, help="IoU threshold for removing duplicates")
+    parser.add_argument("--limit", type=int, default=None, help="Limit number of images to process (default: all)")
+    args = parser.parse_args()
 
-    codloc = ' '.join(
-        f"{grid_cls[r][c]}@{ZONE[(r,c)]}"
-        for r in range(GRID_SIZE) for c in range(GRID_SIZE)
-        if grid_cls[r][c] != 'empty'
-    )
-    flat = ' '.join(grid_cls[r][c] for r in range(GRID_SIZE) for c in range(GRID_SIZE))
-    return {'codloc_string': codloc, 'flat_string': flat, 'grid_2d': grid_cls}
+    # Model Setup
+    print("Loading models into memory...")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
 
-def encode_region_map(bboxes):
-    zones = {}
-    for cls, _, nx1, ny1, nx2, ny2 in bboxes:
-        cx, cy = (nx1+nx2)/2, (ny1+ny2)/2
-        row = 'top' if cy<0.33 else ('mid' if cy<0.67 else 'bot')
-        col = 'left' if cx<0.33 else ('center' if cx<0.67 else 'right')
-        zones.setdefault(f"{row}-{col}", []).append(cls)
-    return zones
+    yolo_model = YOLO(args.yolo_model)
+    florence_processor = AutoProcessor.from_pretrained(args.florence_model, trust_remote_code=True)
+    florence_model = AutoModelForCausalLM.from_pretrained(
+        args.florence_model, trust_remote_code=True, torch_dtype=torch.float32
+    ).to(device)
 
-# ── DETECTION ────────────────────────────────────────────────
-def detect_and_annotate(image_path):
-    img = cv2.imread(image_path)
-    if img is None:
-        print(f"  ⚠️  Cannot read: {image_path} — skipping")
-        return None, None
-
-    orig_h, orig_w = img.shape[:2]
-    annotated  = img.copy()
-    detections = {}
-    bboxes     = []
-
-    for model in [model_coco, model_open]:
-        for r in model(image_path, conf=CONF_THRESHOLD,
-                       device=DEVICE, verbose=False):
-            if r.boxes is None:
-                continue
-            for box in r.boxes:
-                cls_id = int(box.cls[0])
-                conf   = float(box.conf[0])
-                x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
-                cls_name = r.names[cls_id]
-
-                detections[cls_name] = detections.get(cls_name, 0) + 1
-                bboxes.append((cls_name, conf,
-                               x1/orig_w, y1/orig_h,
-                               x2/orig_w, y2/orig_h))
-
-                color = get_color(cls_name)
-                cv2.rectangle(annotated, (x1,y1), (x2,y2), color, 2)
-
-                label = f"{cls_name} {conf:.2f}"
-                (lw, lh), base = cv2.getTextSize(
-                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-                ly = max(y1-lh-base-4, lh+base+4)
-                cv2.rectangle(annotated,
-                              (x1, ly-lh-base-2), (x1+lw+4, ly+base),
-                              color, -1)
-                cv2.putText(annotated, label, (x1+2, ly-2),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                            (255,255,255), 2)
-
-        torch.cuda.empty_cache()   # free VRAM between models
-
-    grid = encode_7x7_grid(bboxes, orig_w, orig_h)
-    metadata = {
-        'frame_id':       os.path.basename(image_path),
-        'image_path':     image_path,
-        'timestamp':      None,
-        'obj_counts':     encode_counts(detections),
-        'obj_tags':       encode_tags(detections),
-        'bbox_string':    encode_bbox_string(bboxes),
-        'codloc_string':  grid['codloc_string'],
-        'flat_grid':      grid['flat_string'],
-        'grid_2d':        grid['grid_2d'],
-        'region_map':     encode_region_map(bboxes),
-        'total_objects':  sum(detections.values()),
-        'raw_detections': detections,
-    }
-    return annotated, metadata
-
-# ── DISPLAY ──────────────────────────────────────────────────
-def show_grid(imgs, titles, cols=3):
-    n    = len(imgs)
-    rows = (n + cols - 1) // cols
-    fig, axes = plt.subplots(rows, cols, figsize=(18, rows*5))
-    axes = np.array(axes).flatten()
-    for i, (img, title) in enumerate(zip(imgs, titles)):
-        axes[i].imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-        axes[i].set_title(title, fontsize=9)
-        axes[i].axis('off')
-    for j in range(len(imgs), len(axes)):
-        axes[j].axis('off')
-    plt.suptitle("🎬 YOLO Detection — Film Keyframes",
-                 fontsize=13, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, 'results_grid.png'),
-                dpi=150, bbox_inches='tight')
-    plt.show()
-    print(f"🖼️  Grid saved: {OUTPUT_DIR}/results_grid.png")
-
-# ── MAIN ─────────────────────────────────────────────────────
-def run():
-    paths = sorted(
-        glob.glob(os.path.join(KEYFRAMES_DIR, '*.jpg')) +
-        glob.glob(os.path.join(KEYFRAMES_DIR, '*.jpeg')) +
-        glob.glob(os.path.join(KEYFRAMES_DIR, '*.png'))
-    )[:MAX_IMAGES]
-
-    if not paths:
-        print(f"❌ No images in '{KEYFRAMES_DIR}'")
-        print("   Put your keyframes there and re-run.")
-        return
-
-    print(f"🎬 Processing {len(paths)} keyframes...\n{'─'*50}")
-
-    all_metadata  = {}
-    all_annotated = []
-    all_titles    = []
-
-    for i, img_path in enumerate(paths, 1):
-        fname = os.path.basename(img_path)
-        print(f"[{i}/{len(paths)}] {fname}")
-
-        annotated, meta = detect_and_annotate(img_path)
-        if annotated is None:
-            continue
-
-        print(f"  Counts  : {meta['obj_counts']}")
-        print(f"  CodLoc  : {meta['codloc_string']}")
-        print(f"  Regions : {meta['region_map']}")
-
-        out_path = os.path.join(OUTPUT_DIR, f"annotated_{fname}")
-        cv2.imwrite(out_path, annotated)
-
-        all_metadata[fname]  = meta
-        all_annotated.append(annotated)
-        all_titles.append(f"{fname}\n{meta['obj_counts'] or 'no detections'}")
-
-    json_path = os.path.join(OUTPUT_DIR, 'metadata.json')
-    json.dump(all_metadata, open(json_path, 'w'), indent=2)
-
-    print(f"\n{'─'*50}")
-    print(f"✅ Done! {len(all_metadata)} frames processed")
-    print(f"📁 Annotated images → {OUTPUT_DIR}/")
-    print(f"📄 metadata.json    → {json_path}  ← hand this to teammates")
-
-    if all_annotated:
-        show_grid(all_annotated, all_titles)
+    # Directory Setup
+    input_folder = Path(args.input_dir)
+    output_folder = Path(args.output_dir)
+    output_folder.mkdir(parents=True, exist_ok=True)
+    
+    image_files = list(input_folder.glob("*.jpg")) + list(input_folder.glob("*.jpeg")) + list(input_folder.glob("*.png"))
+    if args.limit:
+        image_files = image_files[:args.limit]
+        
+    print(f"Found {len(image_files)} images. Starting batch process...")
+    all_results = []
+    
+    for i, img_path in enumerate(image_files):
+        print(f"[{i+1}/{len(image_files)}] Processing: {img_path.name}")
+        try:
+            result_json = process_image_pipeline(
+                str(img_path), yolo_model, florence_model, florence_processor, device, args.iou
+            )
+            
+            out_file = output_folder / f"{img_path.stem}_merged.json"
+            with open(out_file, 'w', encoding='utf-8') as f:
+                json.dump(result_json, f, indent=2, ensure_ascii=False)
+                
+            all_results.append(result_json)
+        except Exception as e:
+            print(f"❌ Error on {img_path.name}: {e}")
+            traceback.print_exc()
+            
+    if all_results:
+        combined_file = output_folder / "all_images_merged.json"
+        with open(combined_file, 'w', encoding='utf-8') as f:
+            json.dump(all_results, f, indent=2, ensure_ascii=False)
+        print(f"\n✅ Batch complete! Saved {len(all_results)} results to {combined_file}")
 
 if __name__ == "__main__":
-    run()
-
-
+    main()

@@ -1,20 +1,20 @@
 # Core
-pandas>=2.2
 openpyxl>=3.1
-yt-dlp>=2025.1.26
-tqdm>=4.66
-python-dotenv>=1.0
+pandas>=2.2
 PyYAML>=6.0
+python-dotenv>=1.0
+tqdm>=4.66
+yt-dlp>=2025.1.26
 
 # Video / image processing
+ffmpeg-python>=0.2.0
 numpy>=1.26
 opencv-python-headless>=4.10
-Pillow>=10.4
-ffmpeg-python>=0.2.0
+pillow==11.3.0
 
 # Utilities
-scikit-learn>=1.5
 matplotlib>=3.9
+scikit-learn>=1.5
 
 # Notebooks / app
 jupyter>=1.0
@@ -22,5 +22,7 @@ notebook>=7.2
 streamlit>=1.37
 
 # Retrieval / ML (can be skipped at the very beginning if needed)
+accelerate==1.13.0
 faiss-cpu>=1.8.0
-transformers>=4.44
+transformers==4.48.3
+ultralytics==8.4.21

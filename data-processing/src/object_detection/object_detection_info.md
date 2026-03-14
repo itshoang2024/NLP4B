@@ -16,3 +16,4 @@ Ensure your Python environment (preferably Python 3.10) has the following librar
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers==4.48.3 ultralytics==8.4.21 accelerate==1.13.0 pillow==11.3.0
+```

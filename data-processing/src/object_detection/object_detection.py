@@ -138,7 +138,7 @@ def main():
     parser = argparse.ArgumentParser(description="Batch Process Images with YOLO and Florence-2")
     parser.add_argument("-i", "--input_dir", type=str, required=True, help="Path to input directory containing images")
     parser.add_argument("-o", "--output_dir", type=str, required=True, help="Path to output directory to save JSONs")
-    parser.add_argument("--yolo_model", type=str, default="yolov8s-world.pt", help="Path to YOLO model")
+    parser.add_argument("--yolo_model", type=str, default="yolov8x-world.pt", help="Path to YOLO model")
     parser.add_argument("--florence_model", type=str, default="microsoft/Florence-2-large-ft", help="Florence model ID")
     parser.add_argument("--iou", type=float, default=0.75, help="IoU threshold for removing duplicates")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of images to process (default: all)")
@@ -161,10 +161,12 @@ def main():
     output_folder.mkdir(parents=True, exist_ok=True)
     
     image_files = list(input_folder.glob("*.jpg")) + list(input_folder.glob("*.jpeg")) + list(input_folder.glob("*.png"))
+    image_files = sorted(image_files)
     if args.limit:
         image_files = image_files[:args.limit]
         
     print(f"Found {len(image_files)} images. Starting batch process...")
+    video_id = input_folder.name or input_folder.resolve().name or "unknown_video"
     all_results = []
     
     for i, img_path in enumerate(image_files):
@@ -173,21 +175,26 @@ def main():
             result_json = process_image_pipeline(
                 str(img_path), yolo_model, florence_model, florence_processor, device, args.iou
             )
-            
-            out_file = output_folder / f"{img_path.stem}_merged.json"
-            with open(out_file, 'w', encoding='utf-8') as f:
-                json.dump(result_json, f, indent=2, ensure_ascii=False)
-                
+
             all_results.append(result_json)
         except Exception as e:
-            print(f"❌ Error on {img_path.name}: {e}")
+            print(f"✗ Error on {img_path.name}: {e}")
             traceback.print_exc()
             
+    combined_payload = {
+        "video_id": video_id,
+        "input_dir": str(input_folder),
+        "total_images": len(all_results),
+        "results": all_results,
+    }
+    combined_file = output_folder / f"{video_id}_object_detection.json"
+    with open(combined_file, 'w', encoding='utf-8') as f:
+        json.dump(combined_payload, f, indent=2, ensure_ascii=False)
+
     if all_results:
-        combined_file = output_folder / "all_images_merged.json"
-        with open(combined_file, 'w', encoding='utf-8') as f:
-            json.dump(all_results, f, indent=2, ensure_ascii=False)
-        print(f"\n✅ Batch complete! Saved {len(all_results)} results to {combined_file}")
+        print(f"\n✓ Batch complete! Saved {len(all_results)} results to {combined_file}")
+    else:
+        print(f"\n! Batch complete with no successful results. Created empty output: {combined_file}")
 
 if __name__ == "__main__":
     main()

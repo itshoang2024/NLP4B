@@ -131,6 +131,59 @@ def process_image_pipeline(image_path_str, yolo_model, florence_model, florence_
     }
     return final_json
 
+
+def save_combined_payload(combined_file, video_id, input_folder, all_results):
+    """Writes combined results atomically to avoid partially written JSON files."""
+    combined_payload = {
+        "video_id": video_id,
+        "input_dir": str(input_folder),
+        "total_images": len(all_results),
+        "results": all_results,
+    }
+    tmp_file = combined_file.with_suffix(combined_file.suffix + ".tmp")
+    with open(tmp_file, 'w', encoding='utf-8') as f:
+        json.dump(combined_payload, f, indent=2, ensure_ascii=False)
+    tmp_file.replace(combined_file)
+
+def load_existing_results(combined_file):
+    """Loads existing output JSON and returns a deduplicated list of previous results."""
+    if not combined_file.exists():
+        return []
+
+    try:
+        with open(combined_file, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+    except Exception as e:
+        print(f"Could not load existing output file {combined_file}: {e}")
+        return []
+
+    if not isinstance(payload, dict):
+        print(f"Existing output file {combined_file} is not a valid JSON object. Starting fresh.")
+        return []
+
+    previous_results = payload.get("results", [])
+    if not isinstance(previous_results, list):
+        print(f"Existing output file {combined_file} has invalid 'results'. Starting fresh.")
+        return []
+
+    deduped_results = []
+    seen_image_ids = set()
+    for item in previous_results:
+        if not isinstance(item, dict):
+            continue
+        image_id = item.get("image_id")
+        if not image_id or image_id in seen_image_ids:
+            continue
+        seen_image_ids.add(image_id)
+        deduped_results.append(item)
+
+    if len(deduped_results) != len(previous_results):
+        print(
+            f"Existing output contained {len(previous_results) - len(deduped_results)} duplicated or invalid entries; they were ignored."
+        )
+
+    return deduped_results
+
 # ==========================================
 # 3. BATCH RUNNER
 # ==========================================
@@ -138,11 +191,41 @@ def main():
     parser = argparse.ArgumentParser(description="Batch Process Images with YOLO and Florence-2")
     parser.add_argument("-i", "--input_dir", type=str, required=True, help="Path to input directory containing images")
     parser.add_argument("-o", "--output_dir", type=str, required=True, help="Path to output directory to save JSONs")
-    parser.add_argument("--yolo_model", type=str, default="yolov8x-world.pt", help="Path to YOLO model")
+    parser.add_argument("--yolo_model", type=str, default="yolov8m-worldv2.pt", help="Path to YOLO model")
     parser.add_argument("--florence_model", type=str, default="microsoft/Florence-2-large-ft", help="Florence model ID")
     parser.add_argument("--iou", type=float, default=0.75, help="IoU threshold for removing duplicates")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of images to process (default: all)")
+    parser.add_argument("--save_every", type=int, default=50, help="Save checkpoint JSON every N successful images (0 disables periodic save)")
     args = parser.parse_args()
+
+    # Directory Setup
+    input_folder = Path(args.input_dir)
+    output_folder = Path(args.output_dir)
+    output_folder.mkdir(parents=True, exist_ok=True)
+    
+    image_files = list(input_folder.glob("*.jpg")) + list(input_folder.glob("*.jpeg")) + list(input_folder.glob("*.png"))
+    image_files = sorted(image_files)
+    if args.limit:
+        image_files = image_files[:args.limit]
+
+    video_id = input_folder.name or input_folder.resolve().name or "unknown_video"
+    combined_file = output_folder / f"{video_id}_object_detection.json"
+
+    all_results = load_existing_results(combined_file)
+    processed_image_ids = {
+        item.get("image_id")
+        for item in all_results
+        if isinstance(item, dict) and item.get("image_id")
+    }
+    remaining_images = [img_path for img_path in image_files if img_path.stem not in processed_image_ids]
+
+    print(f"Found {len(image_files)} images in input directory.")
+    print(f"Already processed: {len(processed_image_ids)}. Remaining: {len(remaining_images)}.")
+
+    if not remaining_images:
+        save_combined_payload(combined_file, video_id, input_folder, all_results)
+        print(f"All images are already processed. Output is up to date at {combined_file}")
+        return
 
     # Model Setup
     print("Loading models into memory...")
@@ -155,41 +238,28 @@ def main():
         args.florence_model, trust_remote_code=True, torch_dtype=torch.float32
     ).to(device)
 
-    # Directory Setup
-    input_folder = Path(args.input_dir)
-    output_folder = Path(args.output_dir)
-    output_folder.mkdir(parents=True, exist_ok=True)
+    print("Starting batch process for remaining images...")
+    processed_since_last_save = 0
     
-    image_files = list(input_folder.glob("*.jpg")) + list(input_folder.glob("*.jpeg")) + list(input_folder.glob("*.png"))
-    image_files = sorted(image_files)
-    if args.limit:
-        image_files = image_files[:args.limit]
-        
-    print(f"Found {len(image_files)} images. Starting batch process...")
-    video_id = input_folder.name or input_folder.resolve().name or "unknown_video"
-    all_results = []
-    
-    for i, img_path in enumerate(image_files):
-        print(f"[{i+1}/{len(image_files)}] Processing: {img_path.name}")
+    for i, img_path in enumerate(remaining_images):
+        print(f"[{i+1}/{len(remaining_images)}] Processing: {img_path.name}")
         try:
             result_json = process_image_pipeline(
                 str(img_path), yolo_model, florence_model, florence_processor, device, args.iou
             )
 
             all_results.append(result_json)
+            processed_since_last_save += 1
+
+            if args.save_every > 0 and processed_since_last_save >= args.save_every:
+                save_combined_payload(combined_file, video_id, input_folder, all_results)
+                print(f"Checkpoint saved after {processed_since_last_save} new images: {combined_file}")
+                processed_since_last_save = 0
         except Exception as e:
             print(f"✗ Error on {img_path.name}: {e}")
             traceback.print_exc()
-            
-    combined_payload = {
-        "video_id": video_id,
-        "input_dir": str(input_folder),
-        "total_images": len(all_results),
-        "results": all_results,
-    }
-    combined_file = output_folder / f"{video_id}_object_detection.json"
-    with open(combined_file, 'w', encoding='utf-8') as f:
-        json.dump(combined_payload, f, indent=2, ensure_ascii=False)
+
+    save_combined_payload(combined_file, video_id, input_folder, all_results)
 
     if all_results:
         print(f"\n✓ Batch complete! Saved {len(all_results)} results to {combined_file}")

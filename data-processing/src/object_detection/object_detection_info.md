@@ -8,7 +8,15 @@ To prevent redundant outputs, the script uses Intersection over Union (IoU) to a
 - **Batch Processing:** Automatically reads all `.jpg`, `.jpeg`, and `.png` files in a target directory.
 - **IoU Deduplication:** Merges overlapping bounding boxes automatically.
 - **Rich JSON Output:** Generates standardized JSONs containing flat tag lists, global descriptions, and precise coordinates for every detected object/region.
+- **Checkpoint Saving:** Automatically writes output JSON every `N` successful images via `--save_every`.
+- **Resume Support:** If output JSON already exists, the script skips processed keyframes and continues from the remaining ones.
 - **Graceful Error Handling:** If one image fails (e.g., due to file corruption), the script catches the error and continues to the next file.
+
+## Resume and Checkpoint
+
+- Use `--save_every 50` (default) to checkpoint after every 50 successful images.
+- Set `--save_every 0` to disable periodic checkpoints and only save at the end.
+- Re-running the same input/output pair will automatically continue from existing output JSON.
 
 ## Prerequisites
 

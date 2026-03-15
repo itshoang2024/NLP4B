@@ -1,5 +1,4 @@
 import os, glob, json, argparse
-# Module chuyên trị Detection của bản 3.0
 from paddleocr import TextDetection 
 
 def parse_args():
@@ -13,8 +12,6 @@ def main():
     args = parse_args()
     
     print("🔄 Loading PaddleOCR 3.0 Detector...")
-    # Khởi tạo mô hình Detection
-    # Nếu muốn nhanh hơn nhưng bớt chính xác một chút, đổi thành model_name="PP-OCRv4_mobile_det"
     model = TextDetection(model_name="PP-OCRv4_server_det")
     
     paths = sorted(
@@ -26,30 +23,39 @@ def main():
     
     for i, p in enumerate(paths, 1):
         fname = os.path.basename(p)
-        
-        # Hàm predict trả về 1 generator, ta lấy các kết quả bên trong
         result_gen = model.predict(p)
         
         boxes = []
-        for res in result_gen:
-            # Ở bản 3.0, kết quả trích xuất qua thuộc tính .json (trả về kiểu Dictionary)
-            res_dict = res.json 
+        for r in result_gen:
+            # 1. Chuyển kết quả sang dict
+            res_dict = r if isinstance(r, dict) else getattr(r, 'json', {})
             
-            # Tọa độ các khung chữ được lưu trong key 'dt_polys'
-            if 'dt_polys' in res_dict:
-                for box in res_dict['dt_polys']:
-                    # Convert về float cho an toàn khi lưu JSON
+            # 2. Xử lý bóc tách chính xác dựa trên bài test
+            # Lấy data thực sự nằm trong key 'res'
+            core_data = res_dict.get('res', res_dict) 
+            
+            # Lấy tọa độ từ 'dt_polys'
+            polys = core_data.get('dt_polys', [])
+            
+            # 3. Ép kiểu và đưa vào mảng
+            for box in polys:
+                try:
+                    # Convert từng điểm sang float
                     poly_box = [[float(pt[0]), float(pt[1])] for pt in box]
                     boxes.append(poly_box)
+                except Exception as e:
+                    pass
                     
         all_boxes[fname] = boxes
         print(f"[{i}/{len(paths)}] {fname} → {len(boxes)} text region(s) found")
         
     os.makedirs(os.path.dirname(os.path.abspath(args.output_json)), exist_ok=True)
-    with open(args.output_json, 'w') as f:
+    
+    out_file = args.output_json if args.output_json.endswith('.json') else os.path.join(args.output_json, "boxes.json")
+    with open(out_file, 'w') as f:
         json.dump(all_boxes, f, indent=2)
         
-    print(f"✅ Xong! Lưu tại {args.output_json}")
+    print(f"✅ Đã lưu JSON tại: {out_file}")
 
 if __name__ == "__main__":
     main()

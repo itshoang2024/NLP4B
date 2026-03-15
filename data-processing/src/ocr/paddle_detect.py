@@ -11,9 +11,9 @@ def parse_args():
 def main():
     args = parse_args()
     
-    # Khởi tạo PaddleOCR (chỉ bật tính năng Detection, tắt Recognition để chạy nhanh như CRAFT)
+    # 1. Khởi tạo model (Bỏ tham số rec=False đi để không bị lỗi)
     print("🔄 Loading PaddleOCR Detector...")
-    ocr = PaddleOCR(use_angle_cls=False, rec=False, lang='en')
+    ocr = PaddleOCR(use_textline_orientation=False, lang='en')
     
     paths = sorted(
         glob.glob(os.path.join(args.keyframes_dir, "*.jpg")) +
@@ -24,15 +24,21 @@ def main():
     
     for i, p in enumerate(paths, 1):
         fname = os.path.basename(p)
-        # Chạy dự đoán
-        result = ocr.ocr(p, cls=False)
         
-        # Format lại Output giống hệt định dạng của CRAFT cũ để không phải sửa Stage 2
+        # 2. Chạy dự đoán: Chỉ truyền rec=False vào lúc chạy hàm ocr()
+        # Điều này sẽ khiến mô hình chỉ trả về Bounding Box (Tọa độ chữ)
+        result = ocr.ocr(p, cls=False, det=True, rec=False)
+        
         boxes = []
         if result and result[0]:
             for line in result[0]:
-                box = line[0]  # Tọa độ 4 góc: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
-                boxes.append(box)
+                # Trong chế độ rec=False, result trả về trực tiếp tọa độ
+                # Format mặc định là: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+                box = line 
+                
+                # Convert thành kiểu float để đưa vào file JSON cho đồng nhất
+                poly_box = [[float(pt[0]), float(pt[1])] for pt in box]
+                boxes.append(poly_box)
                 
         all_boxes[fname] = boxes
         print(f"[{i}/{len(paths)}] {fname} → {len(boxes)} text region(s) found")

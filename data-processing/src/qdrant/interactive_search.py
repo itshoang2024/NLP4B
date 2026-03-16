@@ -35,16 +35,22 @@ from qdrant_client.models import NamedVector
 from transformers import AutoTokenizer, AutoModel
 from IPython.display import display, HTML, Image as IPImage, clear_output
 
-# ── 2. Config ─────────────────────────────────────────────────────────────────
+# ── 2. Config & CLI Arguments ───────────────────────────────────────────────────
+import argparse
+
+parser = argparse.ArgumentParser(description="Qdrant Visual Search")
+parser.add_argument("--top_k", type=int, default=20, help="Number of results to retrieve")
+parser.add_argument("--threshold", type=float, default=0.15, help="Minimum score threshold")
+# use parse_known_args to handle `%run` inside Jupyter/Colab without throwing errors on unknown flags
+args, _ = parser.parse_known_args()
+
 QDRANT_URL      = os.environ.get("QDRANT_URL", "")
 QDRANT_API_KEY  = os.environ.get("QDRANT_API_KEY", "")
 COLLECTION      = "keyframes_v1"
 DENSE_NAME      = "keyframe-dense"
 
-# ▼▼▼ TUNABLE PARAMETERS ▼▼▼
-TOP_K            = 20       # Number of results to retrieve
-SCORE_THRESHOLD  = 0.15     # Minimum similarity score to display
-# ▲▲▲ TUNABLE PARAMETERS ▲▲▲
+TOP_K            = args.top_k
+SCORE_THRESHOLD  = args.threshold
 
 SIGLIP_MODEL_ID = "google/siglip-so400m-patch14-384"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

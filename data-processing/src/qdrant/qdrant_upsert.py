@@ -1,22 +1,30 @@
 """
-qdrant_upsert.py — Upsert SigLIP dense + optional YOLO/Florence sparse vectors into Qdrant Cloud
-==================================================================================================
+qdrant_upsert.py V2 — 4-Vector Azure-Streaming Upsert Pipeline (RAM-optimized)
+================================================================================
 
-Designed for Google Colab:
-  1. !git clone <repo> && cd <repo>
-  2. Set env vars:  QDRANT_URL, QDRANT_API_KEY, AZURE_BLOB_BASE_URL
-  3. !python qdrant_upsert.py --embeddings_dir /content/embeddings --detections_dir /content/detections
+Streams .npy embeddings and detection JSONs directly from Azure Blob Storage
+into Qdrant Cloud. Designed for Colab T4 (15 GB VRAM / 12 GB RAM).
 
-Features:
-  - Deterministic point IDs via uuid5  →  safe re-runs / idempotent upserts
-  - Graceful degradation              →  missing detection JSONs  =  dense-only upload
-  - Batched upserts                   →  memory-efficient at scale
-  - Structured logging                →  console INFO + file ERROR
+RAM Strategy:
+  - Generator-based (yield): never accumulates full point lists in memory
+  - Per-video processing: load → build → upsert → free, one video at a time
+  - Lazy model loading: BM25/BGE-M3 only loaded when first needed
+  - Aggressive gc.collect() after each video to reclaim memory
+
+4-Vector Architecture:
+  1. keyframe-dense        (SigLIP 1152d)   → visual "vibe", abstract context
+  2. keyframe-object-sparse (BM25)          → object presence (unique tags)
+  3. keyframe-caption-dense (BGE-M3 1024d)  → multilingual logical understanding
+  4. keyframe-ocr-sparse   (BM25)           → STUB (future OCR pipeline)
+
+Env vars:
+  AZURE_STORAGE_CONNECTION_STRING
+  QDRANT_URL, QDRANT_API_KEY, AZURE_BLOB_BASE_URL
 """
 
 from __future__ import annotations
 
-# ── 0. Auto-install (Colab-friendly) ──────────────────────────────────────────
+# ── 0. Auto-install ───────────────────────────────────────────────────────────
 import subprocess
 import sys
 
@@ -26,35 +34,49 @@ def _pip(*pkgs: str) -> None:
 
 
 try:
-    from qdrant_client import QdrantClient  # noqa: F401
+    from qdrant_client import QdrantClient
 except ImportError:
     _pip("qdrant-client[fastembed]")
 
 try:
-    from fastembed import SparseTextEmbedding  # noqa: F401
+    from azure.storage.blob import ContainerClient
+except ImportError:
+    _pip("azure-storage-blob")
+
+try:
+    from fastembed import SparseTextEmbedding
 except ImportError:
     _pip("fastembed")
 
+try:
+    from FlagEmbedding import BGEM3FlagModel
+except ImportError:
+    _pip("FlagEmbedding")
+
 # ── 1. Imports ────────────────────────────────────────────────────────────────
 import argparse
+import gc
+import io
 import json
 import logging
 import os
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
+from typing import Generator
 
 import numpy as np
-from qdrant_client import QdrantClient, models
+from azure.storage.blob import ContainerClient
+from fastembed import SparseTextEmbedding
+from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
-    NamedSparseVector,
-    NamedVector,
     PointStruct,
-    SparseVector,
-    VectorParams,
-    SparseVectorParams,
     SparseIndexParams,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
 )
 
 # ── 2. Logging ────────────────────────────────────────────────────────────────
@@ -75,418 +97,387 @@ logger.addHandler(console_h)
 logger.addHandler(file_h)
 
 # ── 3. Constants ──────────────────────────────────────────────────────────────
-DENSE_DIM = 1152          # SigLIP google/siglip-so400m-patch14-384
-DENSE_NAME = "keyframe-dense"
-SPARSE_NAME = "keyframe-sparse"
-SPARSE_MODEL = "Qdrant/bm25"
+SIGLIP_DIM = 1152
+BGE_M3_DIM = 1024
+
+VEC_DENSE = "keyframe-dense"
+VEC_CAPTION_DENSE = "keyframe-caption-dense"
+VEC_OBJECT_SPARSE = "keyframe-object-sparse"
+VEC_OCR_SPARSE = "keyframe-ocr-sparse"
+
+BM25_MODEL = "Qdrant/bm25"
+BGE_M3_MODEL = "BAAI/bge-m3"
 
 
 # ── 4. CLI ────────────────────────────────────────────────────────────────────
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Upsert SigLIP + optional YOLO/Florence vectors into Qdrant Cloud."
+        description="4-Vector Qdrant Upsert — Azure Streaming (RAM-optimized)"
     )
-    p.add_argument(
-        "--embeddings_dir",
-        type=Path,
-        required=True,
-        help="Dir with SigLIP outputs: <video_id>.npy and <video_id>_frames.json",
-    )
-    p.add_argument(
-        "--detections_dir",
-        type=Path,
-        default=None,
-        help="(Optional) Dir with YOLO/Florence detection JSONs: <video_id>.json",
-    )
-    p.add_argument(
-        "--collection_name",
-        type=str,
-        default="keyframes_v1",
-        help="Qdrant collection name (default: keyframes_v1)",
-    )
-    p.add_argument(
-        "--batch_size",
-        type=int,
-        default=100,
-        help="Points per upsert batch (default: 100)",
-    )
+    p.add_argument("--collection_name", default="keyframes_v1")
+    p.add_argument("--batch_size", type=int, default=64,
+                   help="Points per upsert batch (lower = less RAM, default: 64)")
+    p.add_argument("--embeddings_container", default="embeddings")
+    p.add_argument("--detections_container", default="object-detection")
     return p.parse_args()
 
 
-# ── 5. Helpers ────────────────────────────────────────────────────────────────
-def deterministic_id(video_id: str, frame_idx: int) -> str:
-    """Generate a stable UUID-5 string from video_id + frame_idx."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_id}_{frame_idx}"))
+# ── 5. Azure Blob streaming ─────────────────────────────────────────────────
+def get_container_client(conn_str: str, container: str) -> ContainerClient:
+    return ContainerClient.from_connection_string(conn_str, container)
 
 
-def load_frames_json(embeddings_dir: Path, video_id: str) -> list[str] | None:
-    """
-    Try to load <video_id>_frames.json which maps index → frame filename.
-    Returns a list of frame filename strings, or None if not found.
-    """
-    frames_path = embeddings_dir / f"{video_id}_frames.json"
-    if not frames_path.is_file():
-        return None
+def stream_blob_bytes(container: ContainerClient, blob_name: str) -> bytes | None:
+    """Download blob into memory. Returns None if not found."""
     try:
-        with open(frames_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return container.get_blob_client(blob_name).download_blob().readall()
     except Exception as exc:
-        logger.warning(f"Could not parse {frames_path}: {exc}")
+        if "BlobNotFound" in str(exc) or "404" in str(exc):
+            return None
+        logger.warning(f"Blob stream failed '{blob_name}': {exc}")
         return None
 
 
-def load_detection(detections_dir: Path | None, video_id: str) -> dict | None:
-    """
-    Load <detections_dir>/<video_id>.json.
-    Expected schema (per frame):
-      {
-        "frames": {
-           "0": {"tags": ["car", "person"], "caption": "A red car ..."},
-           "1": { ... }
-        }
-      }
-    Returns parsed dict, or None if unavailable.
-    """
-    if detections_dir is None:
+def stream_npy(container: ContainerClient, blob_name: str) -> np.ndarray | None:
+    data = stream_blob_bytes(container, blob_name)
+    if data is None:
         return None
-    det_path = detections_dir / f"{video_id}.json"
-    if not det_path.is_file():
+    arr = np.load(io.BytesIO(data))
+    del data  # free raw bytes immediately
+    return arr
+
+
+def stream_json(container: ContainerClient, blob_name: str) -> dict | list | None:
+    data = stream_blob_bytes(container, blob_name)
+    if data is None:
         return None
-    try:
-        with open(det_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as exc:
-        logger.warning(f"Could not parse detection file {det_path}: {exc}")
-        return None
+    parsed = json.loads(data.decode("utf-8"))
+    del data
+    return parsed
 
 
-# ── 6. Sparse embedding helper ───────────────────────────────────────────────
-_sparse_model: SparseTextEmbedding | None = None
+def discover_video_ids(container: ContainerClient) -> list[str]:
+    """List unique video_ids by scanning for *.npy blobs."""
+    return sorted({
+        Path(b.name).stem for b in container.list_blobs() if b.name.endswith(".npy")
+    })
 
 
-def get_sparse_model() -> SparseTextEmbedding:
-    """Lazy singleton — only loaded if at least one detection JSON exists."""
-    global _sparse_model
-    if _sparse_model is None:
-        logger.info(f"Loading sparse embedding model: {SPARSE_MODEL} ...")
-        from fastembed import SparseTextEmbedding
-        _sparse_model = SparseTextEmbedding(model_name=SPARSE_MODEL)
-        logger.info("Sparse model loaded successfully.")
-    return _sparse_model
+# ── 6. Lazy model singletons ─────────────────────────────────────────────────
+_bm25: SparseTextEmbedding | None = None
+_bge: object | None = None  # BGEM3FlagModel
 
 
-def encode_sparse(text: str) -> SparseVector | None:
-    """Encode a single text string to a Qdrant SparseVector using BM25."""
+def get_bm25() -> SparseTextEmbedding:
+    global _bm25
+    if _bm25 is None:
+        logger.info(f"Loading BM25: {BM25_MODEL} ...")
+        _bm25 = SparseTextEmbedding(model_name=BM25_MODEL)
+    return _bm25
+
+
+def get_bge_m3():
+    global _bge
+    if _bge is None:
+        logger.info(f"Loading BGE-M3: {BGE_M3_MODEL} (fp16) ...")
+        from FlagEmbedding import BGEM3FlagModel
+        _bge = BGEM3FlagModel(BGE_M3_MODEL, use_fp16=True)
+        logger.info("BGE-M3 loaded.")
+    return _bge
+
+
+# ── 7. Encoding (single-item, no batching to save RAM) ───────────────────────
+def encode_bm25(text: str) -> SparseVector | None:
     if not text or not text.strip():
         return None
     try:
-        model = get_sparse_model()
-        results = list(model.embed([text]))
+        results = list(get_bm25().embed([text]))
         if not results:
             return None
-        sparse = results[0]
-        return SparseVector(
-            indices=sparse.indices.tolist(),
-            values=sparse.values.tolist(),
-        )
+        s = results[0]
+        return SparseVector(indices=s.indices.tolist(), values=s.values.tolist())
     except Exception as exc:
-        logger.warning(f"Sparse encoding failed for text '{text[:80]}...': {exc}")
+        logger.warning(f"BM25 failed: {exc}")
         return None
 
 
-# ── 7. Collection setup ──────────────────────────────────────────────────────
+def encode_bge_m3(text: str) -> list[float] | None:
+    if not text or not text.strip():
+        return None
+    try:
+        result = get_bge_m3().encode([text])
+        vec = result["dense_vecs"][0]
+        if hasattr(vec, "tolist"):
+            vec = vec.tolist()
+        if len(vec) != BGE_M3_DIM:
+            logger.warning(f"BGE-M3 dim={len(vec)}, expected {BGE_M3_DIM}")
+            return None
+        return vec
+    except Exception as exc:
+        logger.warning(f"BGE-M3 failed: {exc}")
+        return None
+
+
+# ── 8. Detection JSON parsing ────────────────────────────────────────────────
+def build_det_lookup(detection_data: dict | None) -> dict[str, dict]:
+    """Build image_id → frame_result lookup from detection JSON."""
+    if not detection_data:
+        return {}
+    return {r.get("image_id", ""): r for r in detection_data.get("results", [])}
+
+
+def extract_frame_metadata(frame_result: dict) -> dict:
+    """Extract tags, counts, captions from a single frame's detection result."""
+    gd = frame_result.get("global_descriptions", {})
+    objects = frame_result.get("objects", [])
+    all_labels = [o.get("label", "") for o in objects if o.get("label")]
+
+    return {
+        "tags": gd.get("tags", []),
+        "caption": gd.get("caption", ""),
+        "detailed_caption": gd.get("detailed_caption", ""),
+        "object_counts": dict(Counter(all_labels)),
+        "unique_tags": sorted(set(all_labels)),
+    }
+
+
+# ── 9. OCR stub ──────────────────────────────────────────────────────────────
+def load_ocr_data(video_id: str, frame_idx: int) -> str | None:
+    """STUB: returns None until OCR pipeline is ready."""
+    return None
+
+
+# ── 10. Collection setup ─────────────────────────────────────────────────────
 def ensure_collection(client: QdrantClient, name: str) -> None:
-    """Create collection if it doesn't exist with correct vector config."""
-    collections = [c.name for c in client.get_collections().collections]
-
-    if name in collections:
-        logger.info(f"Collection '{name}' already exists.")
+    if name in [c.name for c in client.get_collections().collections]:
+        logger.info(f"Collection '{name}' exists.")
         return
-
     logger.info(f"Creating collection '{name}' ...")
     client.create_collection(
         collection_name=name,
         vectors_config={
-            DENSE_NAME: VectorParams(
-                size=DENSE_DIM,
-                distance=Distance.COSINE,
-            ),
+            VEC_DENSE: VectorParams(size=SIGLIP_DIM, distance=Distance.COSINE),
+            VEC_CAPTION_DENSE: VectorParams(size=BGE_M3_DIM, distance=Distance.COSINE),
         },
         sparse_vectors_config={
-            SPARSE_NAME: SparseVectorParams(
-                index=SparseIndexParams(on_disk=False),
-            ),
+            VEC_OBJECT_SPARSE: SparseVectorParams(index=SparseIndexParams(on_disk=False)),
+            VEC_OCR_SPARSE: SparseVectorParams(index=SparseIndexParams(on_disk=False)),
         },
     )
-    logger.info(f"Collection '{name}' created with dense ({DENSE_DIM}d) + sparse vectors.")
+    logger.info(f"Collection created: {SIGLIP_DIM}d + {BGE_M3_DIM}d + 2 sparse.")
 
 
-# ── 8. Build points for a single video ───────────────────────────────────────
-def build_points_for_video(
+# ── 11. ID generator ─────────────────────────────────────────────────────────
+def deterministic_id(video_id: str, frame_idx: int) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_id}_{frame_idx}"))
+
+
+# ── 12. GENERATOR: yield one PointStruct at a time ──────────────────────────
+def generate_points(
     video_id: str,
     embeddings: np.ndarray,
-    frame_names: list[str] | None,
-    detection_data: dict | None,
+    frame_indices: list[int] | None,
+    det_lookup: dict[str, dict],
     azure_base_url: str,
-) -> list[PointStruct]:
+) -> Generator[PointStruct, None, None]:
     """
-    Build PointStruct list for one video.
-    embeddings shape: (N, 1152)
+    Yield PointStruct one-by-one. Never holds the full list in memory.
+    After yielding, the caller can batch and upsert in fixed-size chunks.
     """
-    points: list[PointStruct] = []
     n_frames = embeddings.shape[0]
 
-    # Pre-extract the per-frame detection lookup if available
-    det_frames: dict | None = None
-    if detection_data is not None and "frames" in detection_data:
-        det_frames = detection_data["frames"]
-
     for idx in range(n_frames):
-        # ── Frame identifier ─────────────────────────────────────────────
-        # _frames.json may contain:
-        #   A) raw ints like [872, 1230, ...]        → original video frame index
-        #   B) strings  like ["video_00872.jpg", ...] → full filename
-        #   C) not exist at all                       → fallback to sequential idx
-        raw_entry = frame_names[idx] if (frame_names and idx < len(frame_names)) else None
+        # ── Frame index ──────────────────────────────────────────────
+        frame_idx = int(frame_indices[idx]) if (frame_indices and idx < len(frame_indices)) else idx
+        frame_filename = f"{video_id}_{frame_idx:05d}.jpg"
+        image_id = f"{video_id}_{frame_idx:05d}"
 
-        if raw_entry is not None:
-            if isinstance(raw_entry, (int, float)):
-                # Case A: raw frame index number → build filename
-                frame_idx = int(raw_entry)
-                frame_filename = f"{video_id}_{frame_idx:05d}.jpg"
-            elif isinstance(raw_entry, str) and raw_entry.replace(".", "").replace("_", "").isalnum():
-                # Case B: full filename string
-                frame_filename = raw_entry
-                # Try to extract frame index from filename like "video_00872.jpg"
-                try:
-                    stem = Path(raw_entry).stem  # "video_00872"
-                    frame_idx = int(stem.rsplit("_", 1)[-1])
-                except (ValueError, IndexError):
-                    frame_idx = idx
-            else:
-                frame_filename = str(raw_entry)
-                frame_idx = idx
-        else:
-            # Case C: no _frames.json → sequential index (likely wrong for Azure)
-            frame_idx = idx
-            frame_filename = f"{video_id}_{frame_idx:05d}.jpg"
-
-        # ── Deterministic ID ─────────────────────────────────────────────
-        point_id = deterministic_id(video_id, frame_idx)
-
-        # ── Dense vector ─────────────────────────────────────────────────
+        # ── Dense vector (convert row then free ref) ─────────────────
         dense_vec = embeddings[idx].tolist()
 
-        # ── Base payload (always present) ────────────────────────────────
-        azure_url = f"{azure_base_url}/{video_id}/{frame_filename}"
+        # ── Base payload ─────────────────────────────────────────────
+        vectors: dict = {VEC_DENSE: dense_vec}
         payload: dict = {
             "video_id": video_id,
             "frame_idx": frame_idx,
-            "azure_url": azure_url,
+            "azure_url": f"{azure_base_url}/{video_id}/{frame_filename}",
         }
 
-        # ── Optional: detection metadata + sparse vector ─────────────────
-        vectors: dict = {DENSE_NAME: dense_vec}
+        # ── Detection metadata (optional) ────────────────────────────
+        frame_result = det_lookup.get(image_id) or det_lookup.get(f"{video_id}_{frame_idx}")
+        if frame_result:
+            meta = extract_frame_metadata(frame_result)
 
-        if det_frames is not None:
-            frame_det = det_frames.get(str(frame_idx))
-            if frame_det:
-                tags = frame_det.get("tags", [])
-                caption = frame_det.get("caption", "")
-                ocr_text = frame_det.get("ocr", "")
+            payload["tags"] = meta["tags"]
+            payload["caption"] = meta["caption"]
+            payload["detailed_caption"] = meta["detailed_caption"]
+            payload["object_counts"] = meta["object_counts"]
 
-                # Build metadata sub-payload
-                payload["metadata"] = {
-                    "tags": tags,
-                    "caption": caption,
-                }
-                if ocr_text:
-                    payload["metadata"]["ocr"] = ocr_text
+            # Object sparse (BM25 on unique tags)
+            if meta["unique_tags"]:
+                obj_sparse = encode_bm25(" ".join(meta["unique_tags"]))
+                if obj_sparse:
+                    vectors[VEC_OBJECT_SPARSE] = obj_sparse
 
-                # Build sparse text from caption + OCR + tags
-                sparse_text = " ".join(
-                    filter(None, [caption, ocr_text, " ".join(tags)])
-                )
-                sparse_vec = encode_sparse(sparse_text)
-                if sparse_vec is not None:
-                    vectors[SPARSE_NAME] = sparse_vec
+            # Caption dense (BGE-M3 on detailed_caption, lazy-loaded)
+            if meta["detailed_caption"]:
+                cap_vec = encode_bge_m3(meta["detailed_caption"])
+                if cap_vec:
+                    vectors[VEC_CAPTION_DENSE] = cap_vec
 
-        # ── Assemble point ───────────────────────────────────────────────
-        points.append(
-            PointStruct(
-                id=point_id,
-                vector=vectors,
-                payload=payload,
-            )
+        # ── OCR sparse (stub) ────────────────────────────────────────
+        ocr_text = load_ocr_data(video_id, frame_idx)
+        if ocr_text:
+            ocr_sparse = encode_bm25(ocr_text)
+            if ocr_sparse:
+                vectors[VEC_OCR_SPARSE] = ocr_sparse
+
+        yield PointStruct(
+            id=deterministic_id(video_id, frame_idx),
+            vector=vectors,
+            payload=payload,
         )
 
-    return points
 
-
-# ── 9. Batch upsert ──────────────────────────────────────────────────────────
-def batch_upsert(
+# ── 13. Streaming batch upsert (consumes generator in chunks) ────────────────
+def stream_upsert(
     client: QdrantClient,
-    collection_name: str,
-    points: list[PointStruct],
+    collection: str,
+    point_gen: Generator[PointStruct, None, None],
     batch_size: int,
 ) -> tuple[int, int]:
     """
-    Upsert points in batches.
-    Returns (success_count, fail_count).
+    Consume a point generator in fixed-size batches.
+    Each batch is upserted then discarded → constant memory usage.
     """
-    total = len(points)
-    success = 0
-    fail = 0
+    ok = fail = batch_num = 0
+    batch: list[PointStruct] = []
 
-    for start in range(0, total, batch_size):
-        batch = points[start : start + batch_size]
+    for point in point_gen:
+        batch.append(point)
+
+        if len(batch) >= batch_size:
+            batch_num += 1
+            try:
+                client.upsert(collection_name=collection, points=batch)
+                ok += len(batch)
+                logger.info(f"  Batch {batch_num}: upserted {len(batch)} pts (total OK: {ok})")
+            except Exception as exc:
+                fail += len(batch)
+                logger.error(f"  Batch {batch_num} failed: {exc}")
+            batch.clear()  # free memory immediately
+
+    # Flush remaining
+    if batch:
+        batch_num += 1
         try:
-            client.upsert(
-                collection_name=collection_name,
-                points=batch,
-            )
-            success += len(batch)
-            logger.info(
-                f"  Upserted batch [{start + 1}–{start + len(batch)}] / {total}"
-            )
+            client.upsert(collection_name=collection, points=batch)
+            ok += len(batch)
+            logger.info(f"  Batch {batch_num} (final): upserted {len(batch)} pts (total OK: {ok})")
         except Exception as exc:
             fail += len(batch)
-            logger.error(
-                f"  Failed batch [{start + 1}–{start + len(batch)}] / {total}: {exc}"
-            )
+            logger.error(f"  Batch {batch_num} (final) failed: {exc}")
+        batch.clear()
 
-    return success, fail
+    return ok, fail
 
 
-# ── 10. Main ──────────────────────────────────────────────────────────────────
+# ── 14. Main ──────────────────────────────────────────────────────────────────
 def main() -> None:
     args = parse_args()
 
-    # ── Validate environment ─────────────────────────────────────────────
-    qdrant_url = os.environ.get("QDRANT_URL")
-    qdrant_key = os.environ.get("QDRANT_API_KEY")
+    # ── Env vars ─────────────────────────────────────────────────────
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+    qdrant_url = os.environ.get("QDRANT_URL", "")
+    qdrant_key = os.environ.get("QDRANT_API_KEY", "")
     azure_base = os.environ.get("AZURE_BLOB_BASE_URL", "")
 
+    if not conn_str:
+        logger.error("Missing AZURE_STORAGE_CONNECTION_STRING"); sys.exit(1)
     if not qdrant_url or not qdrant_key:
-        logger.error(
-            "Missing env var(s): QDRANT_URL and/or QDRANT_API_KEY. "
-            "Set them before running this script."
-        )
-        sys.exit(1)
+        logger.error("Missing QDRANT_URL / QDRANT_API_KEY"); sys.exit(1)
 
-    if not azure_base:
-        logger.warning(
-            "AZURE_BLOB_BASE_URL is not set. "
-            "azure_url fields in payloads will use relative paths."
-        )
+    # ── Connect ──────────────────────────────────────────────────────
+    emb_container = get_container_client(conn_str, args.embeddings_container)
+    det_container = get_container_client(conn_str, args.detections_container)
+    qdrant = QdrantClient(url=qdrant_url, api_key=qdrant_key)
+    ensure_collection(qdrant, args.collection_name)
 
-    # ── Connect to Qdrant ────────────────────────────────────────────────
-    logger.info("Connecting to Qdrant Cloud ...")
-    client = QdrantClient(url=qdrant_url, api_key=qdrant_key)
-    ensure_collection(client, args.collection_name)
-
-    # ── Discover videos from embeddings dir ──────────────────────────────
-    if not args.embeddings_dir.is_dir():
-        logger.error(f"Embeddings directory not found: {args.embeddings_dir}")
-        sys.exit(1)
-
-    npy_files = sorted(args.embeddings_dir.rglob("*.npy"))
-    if not npy_files:
-        logger.error(f"No .npy files found in {args.embeddings_dir}")
+    # ── Discover videos ──────────────────────────────────────────────
+    video_ids = discover_video_ids(emb_container)
+    if not video_ids:
+        logger.error(f"No .npy blobs in container '{args.embeddings_container}'")
         sys.exit(1)
 
     logger.info("=" * 60)
-    logger.info("Qdrant Vector Upsert Pipeline")
+    logger.info("Qdrant V2: 4-Vector Azure-Streaming Upsert (RAM-Optimized)")
     logger.info("=" * 60)
-    logger.info(f"Embeddings dir:   {args.embeddings_dir}")
-    logger.info(f"Detections dir:   {args.detections_dir or '(not provided)'}")
-    logger.info(f"Collection:       {args.collection_name}")
-    logger.info(f"Batch size:       {args.batch_size}")
-    logger.info(f"Videos found:     {len(npy_files)}")
+    logger.info(f"Embeddings:  {args.embeddings_container}")
+    logger.info(f"Detections:  {args.detections_container}")
+    logger.info(f"Collection:  {args.collection_name}")
+    logger.info(f"Batch size:  {args.batch_size}")
+    logger.info(f"Videos:      {len(video_ids)}")
     logger.info("")
 
-    start_time = time.time()
-    total_success = 0
-    total_fail = 0
-    total_points = 0
-    videos_with_detections = 0
-    videos_dense_only = 0
+    t0 = time.time()
+    total_ok = total_fail = 0
+    n_det = n_dense = 0
 
-    for npy_path in npy_files:
-        video_id = npy_path.stem  # e.g. "abc123"
+    for i, vid in enumerate(video_ids, 1):
+        logger.info(f"[{i}/{len(video_ids)}] Processing: {vid}")
 
-        logger.info(f"Processing video: {video_id}")
+        # ── Stream embeddings (largest object per video) ─────────────
+        embeddings = stream_npy(emb_container, f"{vid}.npy")
+        if embeddings is None:
+            logger.error(f"  Could not load {vid}.npy"); continue
+        if embeddings.ndim != 2 or embeddings.shape[1] != SIGLIP_DIM:
+            logger.error(f"  Bad shape {embeddings.shape}"); del embeddings; continue
 
-        # ── Load dense embeddings ────────────────────────────────────────
-        try:
-            embeddings = np.load(npy_path)
-        except Exception as exc:
-            logger.error(f"  Failed to load {npy_path}: {exc}")
-            continue
+        n = embeddings.shape[0]
+        logger.info(f"  {n} frames streamed ({embeddings.nbytes / 1e6:.1f} MB)")
 
-        if embeddings.ndim != 2 or embeddings.shape[1] != DENSE_DIM:
-            logger.error(
-                f"  Unexpected shape {embeddings.shape} for {video_id} "
-                f"(expected (N, {DENSE_DIM})). Skipping."
-            )
-            continue
+        # ── Stream frame indices ─────────────────────────────────────
+        frame_indices = stream_json(emb_container, f"{vid}_frames.json")
 
-        n_frames = embeddings.shape[0]
-        logger.info(f"  Loaded {n_frames} embeddings ({embeddings.shape})")
+        # ── Stream detection JSON ────────────────────────────────────
+        det_data = stream_json(det_container, f"{vid}.json")
+        det_lookup = build_det_lookup(det_data)
+        del det_data  # free raw JSON, keep only lookup
 
-        # ── Load frame names (optional) ──────────────────────────────────
-        frame_names = load_frames_json(args.embeddings_dir, video_id)
-
-        # ── Load detection data (optional, graceful) ─────────────────────
-        detection_data = load_detection(args.detections_dir, video_id)
-        if detection_data is not None:
-            videos_with_detections += 1
-            logger.info(f"  Detection JSON found → including sparse vectors + metadata")
+        if det_lookup:
+            n_det += 1
+            logger.info(f"  Detection: {len(det_lookup)} frames → objects + caption")
         else:
-            videos_dense_only += 1
-            logger.warning(
-                f"  No detection JSON for '{video_id}' → dense-only upload"
-            )
+            n_dense += 1
+            logger.warning(f"  No detection JSON → dense-only")
 
-        # ── Build points ─────────────────────────────────────────────────
+        # ── Stream-upsert via generator ──────────────────────────────
         try:
-            points = build_points_for_video(
-                video_id=video_id,
-                embeddings=embeddings,
-                frame_names=frame_names,
-                detection_data=detection_data,
-                azure_base_url=azure_base,
+            point_gen = generate_points(
+                vid, embeddings, frame_indices, det_lookup, azure_base
             )
+            ok, fail = stream_upsert(qdrant, args.collection_name, point_gen, args.batch_size)
+            total_ok += ok
+            total_fail += fail
         except Exception as exc:
-            logger.error(f"  Failed to build points for {video_id}: {exc}")
-            continue
+            logger.error(f"  Pipeline failed for {vid}: {exc}")
 
-        total_points += len(points)
+        # ── Aggressive memory cleanup after each video ───────────────
+        del embeddings, frame_indices, det_lookup
+        gc.collect()
 
-        # ── Upsert ───────────────────────────────────────────────────────
-        ok, fail = batch_upsert(client, args.collection_name, points, args.batch_size)
-        total_success += ok
-        total_fail += fail
-
-    # ── Summary ──────────────────────────────────────────────────────────
-    elapsed = time.time() - start_time
-
+    # ── Summary ──────────────────────────────────────────────────────
+    elapsed = time.time() - t0
     logger.info("")
     logger.info("=" * 60)
-    logger.info("Upsert Complete!")
+    logger.info("Upsert V2 Complete!")
     logger.info("=" * 60)
-    logger.info(f"Videos processed:      {len(npy_files)}")
-    logger.info(f"  with detections:     {videos_with_detections}")
-    logger.info(f"  dense-only:          {videos_dense_only}")
-    logger.info(f"Total points built:    {total_points}")
-    logger.info(f"Successfully upserted: {total_success}")
-    logger.info(f"Failed:                {total_fail}")
-    logger.info(f"Elapsed time:          {elapsed:.1f}s")
-
-    if total_fail > 0:
-        logger.warning(
-            f"{total_fail} point(s) failed. Check qdrant_upsert_errors.log for details."
-        )
+    logger.info(f"Videos:     {len(video_ids)} ({n_det} w/ detections, {n_dense} dense-only)")
+    logger.info(f"Upserted:   {total_ok}")
+    logger.info(f"Failed:     {total_fail}")
+    logger.info(f"Time:       {elapsed:.1f}s")
+    if total_fail:
+        logger.warning(f"{total_fail} failures — see qdrant_upsert_errors.log")
 
 
 if __name__ == "__main__":

@@ -49,9 +49,9 @@ except ImportError:
     _pip("fastembed")
 
 try:
-    from FlagEmbedding import BGEM3FlagModel
+    from sentence_transformers import SentenceTransformer
 except ImportError:
-    _pip("FlagEmbedding")
+    _pip("sentence-transformers")
 
 # ── 1. Imports ────────────────────────────────────────────────────────────────
 import argparse
@@ -156,11 +156,28 @@ def stream_json(container: ContainerClient, blob_name: str) -> dict | list | Non
     return parsed
 
 
-def discover_video_ids(container: ContainerClient) -> list[str]:
-    """List unique video_ids by scanning for *.npy blobs."""
-    return sorted({
-        Path(b.name).stem for b in container.list_blobs() if b.name.endswith(".npy")
-    })
+def discover_video_ids(container: ContainerClient) -> dict[str, str]:
+    """Find unique video_ids and their blob prefixes by scanning for *.npy blobs."""
+    video_map = {}
+    for blob in container.list_blobs():
+        if blob.name.endswith(".npy"):
+            vid = Path(blob.name).stem
+            video_map[vid] = blob.name[:-4]  # exact path without .npy
+    return video_map
+
+def discover_detection_jsons(container: ContainerClient) -> dict[str, str]:
+    """Find detection JSON blob paths by scanning detections container."""
+    det_map = {}
+    for blob in container.list_blobs():
+        if blob.name.endswith(".json") or blob.name.endswith(".js"):
+            stem = Path(blob.name).stem
+            # e.g. '0DVVomZLJQs_object_detection' -> '0DVVomZLJQs'
+            if stem.endswith("_object_detection"):
+                vid = stem.replace("_object_detection", "")
+            else:
+                vid = stem
+            det_map[vid] = blob.name
+    return det_map
 
 
 # ── 6. Lazy model singletons ─────────────────────────────────────────────────
@@ -179,9 +196,11 @@ def get_bm25() -> SparseTextEmbedding:
 def get_bge_m3():
     global _bge
     if _bge is None:
-        logger.info(f"Loading BGE-M3: {BGE_M3_MODEL} (fp16) ...")
-        from FlagEmbedding import BGEM3FlagModel
-        _bge = BGEM3FlagModel(BGE_M3_MODEL, use_fp16=True)
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Loading BGE-M3: {BGE_M3_MODEL} on [{device}] ...")
+        from sentence_transformers import SentenceTransformer
+        _bge = SentenceTransformer(BGE_M3_MODEL, device=device)
         logger.info("BGE-M3 loaded.")
     return _bge
 
@@ -205,8 +224,7 @@ def encode_bge_m3(text: str) -> list[float] | None:
     if not text or not text.strip():
         return None
     try:
-        result = get_bge_m3().encode([text])
-        vec = result["dense_vecs"][0]
+        vec = get_bge_m3().encode(text, normalize_embeddings=True)
         if hasattr(vec, "tolist"):
             vec = vec.tolist()
         if len(vec) != BGE_M3_DIM:
@@ -248,11 +266,35 @@ def load_ocr_data(video_id: str, frame_idx: int) -> str | None:
 
 
 # ── 10. Collection setup ─────────────────────────────────────────────────────
+REQUIRED_DENSE = {VEC_DENSE, VEC_CAPTION_DENSE}
+REQUIRED_SPARSE = {VEC_OBJECT_SPARSE, VEC_OCR_SPARSE}
+
+
 def ensure_collection(client: QdrantClient, name: str) -> None:
-    if name in [c.name for c in client.get_collections().collections]:
-        logger.info(f"Collection '{name}' exists.")
-        return
-    logger.info(f"Creating collection '{name}' ...")
+    existing = [c.name for c in client.get_collections().collections]
+
+    if name in existing:
+        # Validate that all 4 required vector names exist in current schema
+        info = client.get_collection(name)
+        existing_vecs = set(info.config.params.vectors.keys()) if info.config.params.vectors else set()
+        existing_sparse = set(info.config.params.sparse_vectors.keys()) if info.config.params.sparse_vectors else set()
+
+        missing_dense = REQUIRED_DENSE - existing_vecs
+        missing_sparse = REQUIRED_SPARSE - existing_sparse
+
+        if not missing_dense and not missing_sparse:
+            logger.info(f"Collection '{name}' exists with correct 4-vector schema.")
+            return
+
+        # Schema mismatch → delete and recreate
+        logger.warning(
+            f"Collection '{name}' has stale schema. "
+            f"Missing dense: {missing_dense or 'none'}, sparse: {missing_sparse or 'none'}. "
+            f"Deleting and recreating..."
+        )
+        client.delete_collection(name)
+
+    logger.info(f"Creating collection '{name}' with 4-vector schema ...")
     client.create_collection(
         collection_name=name,
         vectors_config={
@@ -404,10 +446,12 @@ def main() -> None:
     ensure_collection(qdrant, args.collection_name)
 
     # ── Discover videos ──────────────────────────────────────────────
-    video_ids = discover_video_ids(emb_container)
-    if not video_ids:
+    video_map = discover_video_ids(emb_container)
+    if not video_map:
         logger.error(f"No .npy blobs in container '{args.embeddings_container}'")
         sys.exit(1)
+        
+    det_map = discover_detection_jsons(det_container)
 
     logger.info("=" * 60)
     logger.info("Qdrant V2: 4-Vector Azure-Streaming Upsert (RAM-Optimized)")
@@ -416,20 +460,24 @@ def main() -> None:
     logger.info(f"Detections:  {args.detections_container}")
     logger.info(f"Collection:  {args.collection_name}")
     logger.info(f"Batch size:  {args.batch_size}")
-    logger.info(f"Videos:      {len(video_ids)}")
+    logger.info(f"Videos:      {len(video_map)}")
     logger.info("")
 
     t0 = time.time()
     total_ok = total_fail = 0
     n_det = n_dense = 0
 
+    video_ids = sorted(video_map.keys())
     for i, vid in enumerate(video_ids, 1):
         logger.info(f"[{i}/{len(video_ids)}] Processing: {vid}")
 
+        emb_prefix = video_map[vid]
+        det_blob = det_map.get(vid)
+
         # ── Stream embeddings (largest object per video) ─────────────
-        embeddings = stream_npy(emb_container, f"{vid}.npy")
+        embeddings = stream_npy(emb_container, f"{emb_prefix}.npy")
         if embeddings is None:
-            logger.error(f"  Could not load {vid}.npy"); continue
+            logger.error(f"  Could not load {emb_prefix}.npy"); continue
         if embeddings.ndim != 2 or embeddings.shape[1] != SIGLIP_DIM:
             logger.error(f"  Bad shape {embeddings.shape}"); del embeddings; continue
 
@@ -437,12 +485,14 @@ def main() -> None:
         logger.info(f"  {n} frames streamed ({embeddings.nbytes / 1e6:.1f} MB)")
 
         # ── Stream frame indices ─────────────────────────────────────
-        frame_indices = stream_json(emb_container, f"{vid}_frames.json")
+        frame_indices = stream_json(emb_container, f"{emb_prefix}_frames.json")
 
         # ── Stream detection JSON ────────────────────────────────────
-        det_data = stream_json(det_container, f"{vid}.json")
+        det_data = stream_json(det_container, det_blob) if det_blob else None
         det_lookup = build_det_lookup(det_data)
-        del det_data  # free raw JSON, keep only lookup
+        
+        if det_data is not None:
+             del det_data  # free raw JSON, keep only lookup
 
         if det_lookup:
             n_det += 1

@@ -88,7 +88,7 @@ from qdrant_client.models import (
     SparseVectorParams,
     VectorParams,
 )
-from qdrant_client.http.models import SetPayloadOperation
+from qdrant_client.http.models import SetPayloadOperation, SetPayload
 
 # ── 2. Logging ────────────────────────────────────────────────────────────────
 LOG_FMT = "[%(asctime)s] %(levelname)-8s %(message)s"
@@ -577,7 +577,7 @@ def stream_updates(
         vector_batch.clear()
 
     for pid, payload, vecs in op_gen:
-        if payload: payload_batch.append(SetPayloadOperation(set_payload=payload, points=[pid]))
+        if payload: payload_batch.append(SetPayloadOperation(set_payload=SetPayload(payload=payload, points=[pid])))
         if vecs: vector_batch.append(PointVectors(id=pid, vector=vecs))
         
         if len(payload_batch) >= batch_size or len(vector_batch) >= batch_size:

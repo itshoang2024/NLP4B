@@ -8,7 +8,7 @@ Designed for Colab T4 (15 GB VRAM / 12 GB RAM).
 
 RAM Strategy:
   - Generator-based (yield): never accumulates full point lists in memory
-  - Per-video processing: load → build → upsert → free, one video at a time
+  - Per-video processing: load → bulld → upsert → free, one video at a time
   - Lazy model loading: BM25/BGE-M3 only loaded when first needed
   - O(1) OCR parsing using ijson streaming chunk by chunk
   - Aggressive gc.collect() after each video to reclaim memory
@@ -299,7 +299,7 @@ def clean_ocr_text(text: str) -> str:
 
 def build_ocr_lookup(container: ContainerClient, video_id: str) -> dict[int, str]:
     """Streams OCR JSON array chunks using ijson to build an exact lookup."""
-    blob_name = f"{video_id}/{video_id}_ocr.json"
+    blob_name = f"{video_id}/{video_id}_ocr.json"  # Azure blob name inside the ocr container
     blob_client = container.get_blob_client(blob_name)
     lookup = {}
     try:
@@ -344,12 +344,26 @@ def ensure_collection(client: QdrantClient, name: str) -> None:
             logger.info(f"Collection '{name}' exists with correct 4-vector schema.")
             return
 
-        logger.warning(
-            f"Collection '{name}' has stale schema. "
-            f"Missing dense: {missing_dense or 'none'}, sparse: {missing_sparse or 'none'}. "
-            f"Deleting and recreating..."
-        )
-        client.delete_collection(name)
+        # Add missing vectors using update_collection to safely patch the schema
+        new_dense = {}
+        for vec, size in [(VEC_DENSE, SIGLIP_DIM), (VEC_CAPTION_DENSE, BGE_M3_DIM)]:
+            if vec not in existing_vecs: 
+                new_dense[vec] = VectorParams(size=size, distance=Distance.COSINE)
+        
+        new_sparse = {}
+        for vec in [VEC_OBJECT_SPARSE, VEC_OCR_SPARSE]:
+            if vec not in existing_sparse: 
+                # Note: Sparse vectors don't have dimensions, they just store index/value pairs.
+                new_sparse[vec] = SparseVectorParams(index=SparseIndexParams(on_disk=False))
+            
+        if new_dense or new_sparse:
+            client.update_collection(
+                collection_name=name, 
+                vectors_config=new_dense or None, 
+                sparse_vectors_config=new_sparse or None
+            )
+            logger.info(f"Safely updated collection schema with missing vectors: {list(new_dense.keys()) + list(new_sparse.keys())}.")
+        return
 
     logger.info(f"Creating collection '{name}' with 4-vector schema ...")
     client.create_collection(

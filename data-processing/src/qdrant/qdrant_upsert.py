@@ -299,7 +299,7 @@ def clean_ocr_text(text: str) -> str:
 
 def build_ocr_lookup(container: ContainerClient, video_id: str) -> dict[int, str]:
     """Streams OCR JSON array chunks using ijson to build an exact lookup."""
-    blob_name = f"ocr/{video_id}/{video_id}_ocr.json"
+    blob_name = f"{video_id}/{video_id}_ocr.json"
     blob_client = container.get_blob_client(blob_name)
     lookup = {}
     try:

@@ -8,9 +8,9 @@ Designed for Colab T4 (15 GB VRAM / 12 GB RAM).
 
 RAM Strategy:
   - Generator-based (yield): never accumulates full point lists in memory
-  - Per-video processing: load → bulld → upsert → free, one video at a time
+  - Per-video processing: load → build → upsert → free, one video at a time
   - Lazy model loading: BM25/BGE-M3 only loaded when first needed
-  - O(1) OCR parsing using ijson streaming chunk by chunk
+  - O(1) OCR parsing using standard json.loads (since chunk sizes are small enough)
   - Aggressive gc.collect() after each video to reclaim memory
 
 4-Vector Architecture:
@@ -298,27 +298,26 @@ def clean_ocr_text(text: str) -> str:
     return text
 
 def build_ocr_lookup(container: ContainerClient, video_id: str) -> dict[int, str]:
-    """Streams OCR JSON array chunks using ijson to build an exact lookup."""
+    """Loads OCR JSON array completely using stream_json to build an exact lookup."""
     blob_name = f"{video_id}/{video_id}_ocr.json"  # Azure blob name inside the ocr container
-    blob_client = container.get_blob_client(blob_name)
     lookup = {}
     try:
-        downloader = blob_client.download_blob()
-        # ijson stream over the Azure chunky downloader bypassing bulk memory load
-        for item in ijson.items(downloader.chunks(), 'item'):
-            img_name = item.get("image", "")
-            raw_text = item.get("ocr_text", "")
-            cleaned = clean_ocr_text(raw_text)
-            
-            if cleaned:    
-                stem = Path(img_name).stem
-                parts = stem.split("_")
-                if len(parts) >= 2:
-                    try:
-                        f_idx = int(parts[-1])
-                        lookup[f_idx] = cleaned
-                    except ValueError:
-                        pass
+        data = stream_json(container, blob_name)
+        if data:
+            for item in data:
+                img_name = item.get("image", "")
+                raw_text = item.get("ocr_text", "")
+                cleaned = clean_ocr_text(raw_text)
+                
+                if cleaned:    
+                    stem = Path(img_name).stem
+                    parts = stem.split("_")
+                    if len(parts) >= 2:
+                        try:
+                            f_idx = int(parts[-1])
+                            lookup[f_idx] = cleaned
+                        except ValueError:
+                            pass
     except Exception as exc:
         if "BlobNotFound" not in str(exc) and "404" not in str(exc):
             logger.warning(f"Failed OCR lookup {blob_name}: {exc}")
@@ -357,12 +356,15 @@ def ensure_collection(client: QdrantClient, name: str) -> None:
                 new_sparse[vec] = SparseVectorParams(index=SparseIndexParams(on_disk=False))
             
         if new_dense or new_sparse:
-            client.update_collection(
-                collection_name=name, 
-                vectors_config=new_dense or None, 
-                sparse_vectors_config=new_sparse or None
-            )
-            logger.info(f"Safely updated collection schema with missing vectors: {list(new_dense.keys()) + list(new_sparse.keys())}.")
+            try:
+                client.update_collection(
+                    collection_name=name, 
+                    vectors_config=new_dense or None, 
+                    sparse_vectors_config=new_sparse or None
+                )
+                logger.info(f"Safely updated collection schema with missing vectors: {list(new_dense.keys()) + list(new_sparse.keys())}.")
+            except Exception as e:
+                logger.error(f"Failed to update collection '{name}' securely: {e}")
         return
 
     logger.info(f"Creating collection '{name}' with 4-vector schema ...")
@@ -682,7 +684,7 @@ def main() -> None:
         # ── Setup OCR lookup & Meta ──────────────────────────────────
         ocr_lookup = build_ocr_lookup(ocr_container, vid)
         if ocr_lookup:
-            logger.info(f"  OCR Text: {len(ocr_lookup)} mapped frames parsed via ijson.")
+            logger.info(f"  OCR Text: {len(ocr_lookup)} mapped frames parsed via JSON.")
             
         vid_meta = meta_dict.get(vid, {})
 

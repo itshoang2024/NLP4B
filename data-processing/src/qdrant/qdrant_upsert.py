@@ -246,6 +246,8 @@ def encode_bm25(text: str) -> SparseVector | None:
         if not results:
             return None
         s = results[0]
+        if len(s.indices) == 0:
+            return None
         return SparseVector(indices=s.indices.tolist(), values=s.values.tolist())
     except Exception as exc:
         logger.warning(f"BM25 failed: {exc}")

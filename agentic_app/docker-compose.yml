@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  agentic-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    env_file:
+      - config/.env
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs

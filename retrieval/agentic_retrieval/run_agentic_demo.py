@@ -32,6 +32,14 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
+# ── fix Windows console encoding ─────────────────────────────────────────────
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ── project imports ──────────────────────────────────────────────────────────
 from graph import build_agentic_retrieval_graph
 from services.llm_service import LLMService

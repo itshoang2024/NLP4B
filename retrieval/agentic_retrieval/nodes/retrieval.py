@@ -45,7 +45,7 @@ def _adapt_results(raw_results: list[dict], source: str) -> list[dict]:
             "score": float(item["score"]),
             "source": source,
             "branch": "agentic",
-            "raw_payload": item,
+            "raw_payload": item.get("raw_payload", {}),
         })
     return adapted
 

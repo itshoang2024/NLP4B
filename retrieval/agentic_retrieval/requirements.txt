@@ -1,0 +1,23 @@
+# Python 3.11 required (3.12 also works).
+# Install with: pip install -r requirements.txt
+
+# Core orchestration 
+langchain==1.2.7
+langchain-core==1.2.24
+langgraph==1.0.7
+
+# Environment / config
+python-dotenv==1.2.2
+pydantic==2.12.5
+
+# Vector store & retrieval
+qdrant-client==1.17.1
+fastembed>=0.3.0          # BM25 sparse encoding; requires Python <=3.12
+
+# Embedding models 
+sentence-transformers>=3.0
+transformers>=4.48
+torch>=2.2
+
+# LLM providers
+google-genai==1.70.0

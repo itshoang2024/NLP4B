@@ -1,35 +1,40 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# Dockerfile — Embedding Service (Single-stage, CPU-only PyTorch)
+# Dockerfile — Embedding Service (CPU-only PyTorch)
 # ══════════════════════════════════════════════════════════════════════════════
-# Target: Azure VM Standard_B4as_v2 (4 vCPU, 16GB RAM, NO GPU)
-# ══════════════════════════════════════════════════════════════════════════════
-
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps (sentencepiece + healthcheck)
+# System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc curl cmake \
-    libsentencepiece-dev && \
+    build-essential gcc g++ cmake curl \
+    libprotobuf-dev protobuf-compiler && \
     rm -rf /var/lib/apt/lists/*
 
-# PyTorch CPU-only (saves ~1.5GB vs CUDA wheels)
+# 1) sentencepiece FIRST (before transformers touches it)
+RUN pip install --no-cache-dir sentencepiece==0.2.0 protobuf
+RUN python -c "import sentencepiece; print('sentencepiece OK:', sentencepiece.__version__)"
+
+# 2) PyTorch CPU-only
 RUN pip install --no-cache-dir \
     torch torchvision torchaudio \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Sentencepiece + protobuf (required by SigLIP tokenizer)
-RUN pip install --no-cache-dir sentencepiece protobuf
-
-# Remaining Python deps
+# 3) All other deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Application code
+# 4) VERIFY all critical imports at build time
+RUN python -c "\
+import sentencepiece; print('✅ sentencepiece', sentencepiece.__version__); \
+import torch; print('✅ torch', torch.__version__); \
+from transformers import AutoTokenizer, AutoModel; print('✅ transformers OK'); \
+from sentence_transformers import SentenceTransformer; print('✅ sentence-transformers OK'); \
+from fastembed import SparseTextEmbedding; print('✅ fastembed OK'); \
+"
+
 COPY app.py .
 
-# HuggingFace cache (mounted as volume)
 ENV HF_HOME=/root/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/hub
 ENV SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface/hub

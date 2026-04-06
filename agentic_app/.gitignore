@@ -9,4 +9,4 @@ build/
 .pytest_cache/
 logs/
 .mypy_cache/
-*.md
+plan.md

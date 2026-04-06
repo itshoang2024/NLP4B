@@ -1,0 +1,105 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# docker-compose.yml — Azure AI Provider (Phase 1: Mock Services)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Architecture:
+#   Client → api_gateway:8080 → embedding_service:8001 (CPU)
+#                              → llm_service:8000      (GPU)
+#
+# Resource Budget (Standard_NC4as_T4_v3):
+#   Total: 4 vCPUs, 28GB RAM, 1x T4 16GB
+#   ├─ llm_service:       GPU exclusive, 10GB RAM, 1.0 CPU
+#   ├─ embedding_service:  CPU only, 12GB RAM, 2.5 CPU
+#   ├─ api_gateway:        CPU only, 1GB RAM, 0.5 CPU
+#   └─ OS reserved:        ~5GB RAM, ~0 CPU overhead
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Service 1: LLM (GPU Bound) ─────────────────────────────────────────────
+  # Phase 1: Mock mode — sleep infinity (no model loaded)
+  # Phase 2: vLLM with real model
+  llm_service:
+    image: vllm/vllm-openai:latest
+    container_name: llm_service
+    entrypoint: ["sleep", "infinity"]  # ← Mock: no model loaded yet
+    # Phase 2: uncomment below to run vLLM for real
+    # command:
+    #   - --model=${LLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+    #   - --max-model-len=${LLM_MAX_MODEL_LEN:-4096}
+    #   - --gpu-memory-utilization=0.90
+    #   - --dtype=half
+    #   - --port=8000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 10G
+          cpus: "1.0"
+    networks:
+      - ai_network
+    restart: unless-stopped
+
+  # ── Service 2: Embedding (CPU Bound) ────────────────────────────────────────
+  embedding_service:
+    build:
+      context: ./embedding_service
+      dockerfile: Dockerfile
+    container_name: embedding_service
+    ports:
+      - "8001:8001"
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+          cpus: "2.5"
+    environment:
+      - EMBEDDING_PORT=${EMBEDDING_PORT:-8001}
+    networks:
+      - ai_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Service 3: API Gateway (Lightweight Router) ─────────────────────────────
+  api_gateway:
+    build:
+      context: ./api_gateway
+      dockerfile: Dockerfile
+    container_name: api_gateway
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      - EMBEDDING_SERVICE_URL=http://embedding_service:8001
+      - LLM_SERVICE_URL=http://llm_service:8000
+      - GATEWAY_TIMEOUT=${GATEWAY_TIMEOUT:-5}
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "0.5"
+    networks:
+      - ai_network
+    depends_on:
+      - embedding_service
+      - llm_service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  ai_network:
+    driver: bridge
+    name: ai_provider_network

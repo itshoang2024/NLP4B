@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+artifacts/logs/
+artifacts/reports/
+artifacts/qc/
+
+# Data artifacts (do not commit heavy files)
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.jpg
+*.jpeg
+*.png
+*.npy
+*.npz
+*.pt
+*.faiss
+*.index
+*.parquet
+
+# Local data folders
+data/raw_videos/
+data/proxy_videos/
+data/keyframes/
+data/embeddings/
+data/faiss_indexes/
+data/cache/
+
+# Shared-drive style artifact folders
+raw_videos/
+proxy_videos/
+keyframes/
+embeddings/
+faiss_indexes/
+qc_reports/
+videos/
+info_json/
+downloaded_videos/
+notebook/
+templates/
+scripts/
+output/
+
+# Notebook outputs / misc
+*.out
+*.tmp

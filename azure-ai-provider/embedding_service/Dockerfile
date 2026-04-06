@@ -10,9 +10,9 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
-# System build deps
+# System build deps (including sentencepiece)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc && \
+    build-essential gcc cmake libprotobuf-dev protobuf-compiler && \
     rm -rf /var/lib/apt/lists/*
 
 # Install PyTorch CPU-only first (saves ~1.5GB vs CUDA wheels)
@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir \
     torch torchvision torchaudio \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Install remaining Python deps
+# Install sentencepiece + remaining Python deps
+RUN pip install --no-cache-dir sentencepiece protobuf
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -30,8 +31,9 @@ FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Runtime system deps (curl for healthcheck)
-RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+# Runtime system deps (curl + sentencepiece shared lib)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl libsentencepiece-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder

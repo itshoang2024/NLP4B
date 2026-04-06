@@ -1,56 +1,42 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# Dockerfile — Embedding Service (Multi-stage, CPU-only PyTorch)
+# Dockerfile — Embedding Service (Single-stage, CPU-only PyTorch)
 # ══════════════════════════════════════════════════════════════════════════════
 # Target: Azure VM Standard_B4as_v2 (4 vCPU, 16GB RAM, NO GPU)
-# Image size: ~3.5GB (with models cached on host volume)
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── Stage 1: Builder ──────────────────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim
 
-WORKDIR /build
+WORKDIR /app
 
-# System build deps (including sentencepiece)
+# System deps (sentencepiece + healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc cmake libprotobuf-dev protobuf-compiler && \
+    build-essential gcc curl cmake \
+    libsentencepiece-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install PyTorch CPU-only first (saves ~1.5GB vs CUDA wheels)
+# PyTorch CPU-only (saves ~1.5GB vs CUDA wheels)
 RUN pip install --no-cache-dir \
     torch torchvision torchaudio \
     --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Install sentencepiece + remaining Python deps
+# Sentencepiece + protobuf (required by SigLIP tokenizer)
 RUN pip install --no-cache-dir sentencepiece protobuf
+
+# Remaining Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-
-# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
-FROM python:3.11-slim AS runtime
-
-WORKDIR /app
-
-# Runtime system deps (curl + sentencepiece shared lib)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl libsentencepiece-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# Copy application code
+# Application code
 COPY app.py .
 
-# HuggingFace cache will be mounted as volume (see docker-compose)
+# HuggingFace cache (mounted as volume)
 ENV HF_HOME=/root/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/hub
 ENV SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface/hub
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 CMD ["uvicorn", "app:app", \

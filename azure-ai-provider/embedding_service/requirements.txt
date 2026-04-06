@@ -1,20 +1,20 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# Azure AI Provider — Environment Variables
+# requirements.txt — Embedding Service (CPU-only)
 # ══════════════════════════════════════════════════════════════════════════════
+# Install: pip install --no-cache-dir -r requirements.txt
+# Note: torch CPU wheel is pulled via --extra-index-url in Dockerfile
 
-# HuggingFace token (for gated model downloads)
-HF_TOKEN=hf_your_token_here
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
 
-# LLM Service (vLLM)
-LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
-LLM_PORT=8000
-LLM_MAX_MODEL_LEN=4096
+# Embedding models
+sentence-transformers>=3.3.0
+fastembed>=0.4.0
+transformers>=4.45.0
 
-# Embedding Service
-EMBEDDING_PORT=8001
+# PyTorch CPU — installed separately in Dockerfile via extra-index-url
+# torch>=2.5.0
 
-# API Gateway
-GATEWAY_PORT=8080
-
-# Timeouts (seconds)
-GATEWAY_TIMEOUT=5
+# Utilities
+numpy>=1.26.0

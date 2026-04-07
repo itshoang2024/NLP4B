@@ -18,7 +18,7 @@ html, body,
 
 /* ── Brand logo ───────────────────────────────────────────────────────────── */
 .brand-logo {
-    position: fixed;
+    position: absolute;
     top: 24px;
     left: 36px;
     font-size: 22px;
@@ -339,7 +339,10 @@ html, body,
 
 /* ── Chat input bar & Bottom Container ────────────────────────────────────── */
 [data-testid="stBottomBlockContainer"],
+[data-testid="stAppBottomBlockContainer"],
+.stAppBottomBlockContainer,
 [data-testid="stBottom"] {
+    background-color: transparent !important;
     background: transparent !important;
 }
 

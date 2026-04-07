@@ -1,0 +1,14 @@
+# ── Core framework ────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# ── Qdrant ────────────────────────────────────────────────────────────────────
+qdrant-client>=1.9.0
+
+# ── Embedding models ──────────────────────────────────────────────────────────
+torch>=2.0.0
+transformers>=4.40.0        # SigLIP (AutoModel / AutoTokenizer)
+sentence-transformers>=3.0.0  # BGE-M3
+sentencepiece>=0.2.0        # Required for SigLIP Tokenizer

@@ -1,62 +1,351 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;1,14..32,400&display=swap');
 
-/* Thay đổi font chữ toàn bộ trang sang Inter (Hỗ trợ tiếng Việt hoàn hảo) */
-html,
-body,
-[class*="st-"],
-[class*="css"],
-textarea,
-input,
-button {
+/* ── Reset & Base ─────────────────────────────────────────────────────────── */
+html, body, [class*="st-"], [class*="css"], textarea, input, button {
     font-family: 'Inter', sans-serif !important;
 }
 
-/* White blank canvas baseline */
-html,
-body,
+html, body,
 [data-testid="stAppViewContainer"],
 [data-testid="stHeader"],
 [data-testid="stSidebar"] {
-    background: #ffffff;
+    background: #f7f8fc !important;
 }
 
-[data-testid="stHeader"] {
-    border-bottom: none;
-    /* Ẩn hoàn toàn thẻ header chứa nút Deploy và menu 3 chấm */
-    display: none !important;
-    visibility: hidden !important;
-}
+[data-testid="stHeader"]      { display: none !important; }
+[data-testid="stMainBlockContainer"] { padding-top: 0 !important; }
+[data-testid="stVerticalBlock"] { gap: 0 !important; }
 
-/* Tên dự án ở góc trái trên cùng */
+/* ── Brand logo ───────────────────────────────────────────────────────────── */
 .brand-logo {
     position: fixed;
-    top: 28px;
-    left: 40px;
-    font-size: 26px;
+    top: 24px;
+    left: 36px;
+    font-size: 22px;
     font-weight: 800;
-    color: #1a1a1a;
-    letter-spacing: -0.5px;
+    color: #1a1a2e;
+    letter-spacing: -0.6px;
     z-index: 999999;
     user-select: none;
-    /* Optional: thêm chút bóng để tạo độ nổi */
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
-.blank-canvas {
-    min-height: 90vh;
+/* ── Hero (idle state) ────────────────────────────────────────────────────── */
+.hero-center {
+    min-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px 20px;
+}
+
+.hero-sparkle {
+    font-size: 52px;
+    margin-bottom: 20px;
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50%       { transform: translateY(-8px); }
+}
+
+.hero-title {
+    font-size: clamp(26px, 4vw, 42px);
+    font-weight: 800;
+    color: #12122a;
+    letter-spacing: -1px;
+    margin: 0 0 14px;
+    line-height: 1.2;
+}
+
+.hero-sub {
+    font-size: 16px;
+    color: #666;
+    max-width: 560px;
+    line-height: 1.6;
+    margin: 0 0 28px;
+}
+
+.chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+}
+
+.chip {
+    background: #fff;
+    border: 1.5px solid #e2e5f1;
+    border-radius: 24px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: #444;
+    cursor: default;
+    transition: border-color .2s, box-shadow .2s;
+}
+
+.chip:hover {
+    border-color: #5a8dec;
+    box-shadow: 0 2px 10px rgba(90,141,236,.15);
+}
+
+/* ── Results header ───────────────────────────────────────────────────────── */
+.results-header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 72px 32px 8px;
+}
+
+.results-query {
+    font-size: 20px;
+    font-weight: 700;
+    color: #12122a;
+    letter-spacing: -0.4px;
+}
+
+.results-count {
+    font-size: 13px;
+    color: #888;
+    font-weight: 500;
+    background: #efefef;
+    padding: 3px 10px;
+    border-radius: 20px;
+}
+
+/* ── Latency bar ──────────────────────────────────────────────────────────── */
+.latency-bar {
+    display: flex;
+    gap: 8px;
+    padding: 0 32px 20px;
+    flex-wrap: wrap;
+}
+
+.lat-chip {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.2px;
+}
+.lat-chip.enc  { background: #e8f4ff; color: #1a6bb5; }
+.lat-chip.srch { background: #e8fff2; color: #1a8b55; }
+.lat-chip.tot  { background: #f0eeff; color: #5a2eb5; }
+
+/* ── Results grid ─────────────────────────────────────────────────────────── */
+.results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 18px;
+    padding: 0 24px 120px;
+}
+
+/* ── Result card ──────────────────────────────────────────────────────────── */
+.result-card {
+    background: #ffffff;
+    border-radius: 16px;
+    border: 1.5px solid #eaecf4;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 2px 12px rgba(0,0,0,.05);
+    transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+    animation: cardIn .35s ease both;
+    position: relative;
+}
+
+.result-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 30px rgba(90,141,236,.14);
+    border-color: #c5d7f8;
+}
+
+@keyframes cardIn {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Rank badge */
+.card-rank {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(18,18,42,.72);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 20px;
+    backdrop-filter: blur(4px);
+    z-index: 2;
+    letter-spacing: 0.3px;
+}
+
+/* Image area */
+.card-img-wrap {
     width: 100%;
+    height: 190px;
+    overflow: hidden;
+    background: #e9eaf0;
+    position: relative;
 }
 
-/* Kiểu dáng cho thanh search (chat input) */
-[data-testid="stChatInput"]>div,
+.card-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform .35s ease;
+}
+
+.result-card:hover .card-img {
+    transform: scale(1.04);
+}
+
+.card-img-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #aaa;
+    font-size: 13px;
+    background: #f0f1f5;
+}
+
+/* Card body */
+.card-body {
+    padding: 14px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+}
+
+.card-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.meta-pill {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 20px;
+}
+.meta-pill.video { background: #e8f0ff; color: #2c5fbb; }
+.meta-pill.frame { background: #fff3e0; color: #b25c00; }
+.meta-pill.time  { background: #e6faf2; color: #1a8a55; }
+
+/* RRF score bar */
+.score-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.score-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #999;
+    width: 28px;
+    flex-shrink: 0;
+    letter-spacing: 0.5px;
+}
+
+.score-bar-bg {
+    flex: 1;
+    height: 6px;
+    background: #eef0f5;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.score-bar-fill {
+    height: 100%;
+    border-radius: 10px;
+    background: linear-gradient(90deg, #5a8dec, #38c8a8);
+    transition: width .6s ease;
+}
+
+.score-val {
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    color: #666;
+    width: 62px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* Caption */
+.card-caption {
+    font-size: 13px;
+    color: #444;
+    line-height: 1.55;
+    margin: 0;
+    font-style: italic;
+    border-left: 3px solid #e2e5f1;
+    padding-left: 10px;
+}
+
+/* OCR chip */
+.card-ocr {
+    font-size: 12px;
+    color: #666;
+    background: #f7f8fc;
+    border-radius: 8px;
+    padding: 6px 10px;
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+}
+
+.ocr-label {
+    font-size: 10px;
+    font-weight: 700;
+    background: #dee3f0;
+    color: #5a6680;
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    letter-spacing: 0.5px;
+}
+
+/* YouTube button */
+.yt-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #ff2a2a;
+    color: #fff !important;
+    text-decoration: none !important;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 8px;
+    margin-top: 2px;
+    transition: background .2s, transform .15s;
+    width: fit-content;
+}
+
+.yt-btn:hover {
+    background: #c50000;
+    transform: translateY(-1px);
+}
+
+/* ── Chat input bar ───────────────────────────────────────────────────────── */
+[data-testid="stChatInput"] > div,
 .stChatInputContainer {
     background-color: #e0ecff !important;
     border-radius: 54px !important;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
-    border: 2px solid #182b50 !important;
+    box-shadow: 0 6px 24px rgba(0,0,0,.18) !important;
+    border: 2px solid #c2d5f8 !important;
 }
 
-/* Đảm bảo phần nhập chữ và TẤT CẢ các thẻ div bọc bên trong nó trở nên trong suốt để lộ màu nền xanh */
 .stChatInputContainer div,
 .stChatInputContainer textarea,
 [data-testid="stChatInput"] textarea {
@@ -67,46 +356,53 @@ body,
 [data-testid="stChatInput"] {
     display: flex;
     justify-content: center;
-    max-width: 800px;
+    max-width: 760px;
     margin: 0 auto;
 }
 
-/* Đổi icon nút Submit thành mũi tên chevron hướng phải */
-[data-testid="stChatInputSubmitButton"] svg {
-    display: none !important;
-}
-
+[data-testid="stChatInputSubmitButton"] svg { display: none !important; }
 [data-testid="stChatInputSubmitButton"]::after {
     content: "❯";
-    /* Biểu tượng mũi tên nhọn như trong hình */
     font-size: 20px;
     font-weight: 800;
     display: flex;
     align-items: center;
     justify-content: center;
 }
-
-/* CHỈNH MÀU NỀN CỦA NÚT SUBMIT KHI CÓ TEXT (ACTIVE) Ở ĐÂY 👇 */
 [data-testid="stChatInputSubmitButton"]:not(:disabled) {
-    background-color: #90b5f9 !important;
-    /* Đổi màu xanh tại đây */
-    color: #ffffff !important;
-    /* Màu của mũi tên (trắng) */
+    background-color: #5a8dec !important;
+    color: #fff !important;
     border-radius: 50% !important;
-    /* Dòng này giúp nút bo tròn thành hình tròn xoe nếu bạn muốn */
 }
 
-/* --- CUSTOM SPINNER CHO VIỆC TÌM KIẾM --- */
+/* ── Clear button ─────────────────────────────────────────────────────────── */
+[data-testid="stButton"] > button {
+    border-radius: 24px !important;
+    border: 1.5px solid #dde2ef !important;
+    background: #fff !important;
+    color: #444 !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    padding: 8px 20px !important;
+    transition: background .2s, border-color .2s !important;
+    margin-bottom: 80px;
+}
+[data-testid="stButton"] > button:hover {
+    background: #f0f4ff !important;
+    border-color: #5a8dec !important;
+    color: #2c5fbb !important;
+}
+
+/* ── Loading spinner ──────────────────────────────────────────────────────── */
 .custom-loader-container {
     position: fixed;
-    top: 20%;
+    top: 22%;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
-    justify-content: center;
     align-items: center;
-    gap: 1.5rem;
+    gap: 1.4rem;
     z-index: 999999;
 }
 
@@ -117,45 +413,33 @@ body,
     display: flex;
     justify-content: center;
     align-items: center;
-    background: transparent;
 }
 
-/* Vòng xoay ngoài */
 .custom-loader::before {
     content: "";
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    inset: 0;
     box-sizing: border-box;
     border-radius: 50%;
-    /* Viền mờ chung, viền xanh dương ở góc tạo hiệu ứng spinner */
-    border: 4px solid rgba(90, 141, 236, 0.15);
+    border: 4px solid rgba(90,141,236,.15);
     border-top-color: #5a8dec;
-    animation: spin-gradient 1.2s linear infinite;
-    box-shadow: 0 0 16px rgba(90, 141, 236, 0.2);
+    animation: spin 1.1s linear infinite;
+    box-shadow: 0 0 16px rgba(90,141,236,.2);
 }
 
-@keyframes spin-gradient {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 
-/* Icon ✨ ở giữa */
-.custom-loader-icon {
-    /* Hiệu ứng nhịp đập nhẹ cho icon */
-    animation: pulse-sparkle 2s ease-in-out infinite;
-}
+.custom-loader-icon { animation: pulse-sparkle 2s ease-in-out infinite; }
 
 @keyframes pulse-sparkle {
-    0% { transform: scale(0.9); opacity: 0.8; }
-    50% { transform: scale(1.1); opacity: 1; }
-    100% { transform: scale(0.9); opacity: 0.8; }
+    0%, 100% { transform: scale(.9); opacity: .8; }
+    50%       { transform: scale(1.1); opacity: 1; }
 }
 
 .custom-loader-text {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 500;
     color: #4a5568;
     animation: pulse-sparkle 2s ease-in-out infinite;

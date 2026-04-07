@@ -33,6 +33,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 import torch
 from qdrant_client import QdrantClient, models
+from fastembed import SparseTextEmbedding
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModel, AutoTokenizer
 
@@ -53,6 +54,7 @@ VEC_OCR_SPARSE = "keyframe-ocr-sparse"
 
 SIGLIP_MODEL = "google/siglip-so400m-patch14-384"
 BGE_M3_MODEL = "BAAI/bge-m3"
+BM25_MODEL = "Qdrant/bm25"
 
 DEFAULT_PAYLOAD_FIELDS = [
     "video_id",
@@ -72,10 +74,10 @@ DEFAULT_PAYLOAD_FIELDS = [
 ]
 
 POSSIBLE_TITLE_FIELDS = ("title", "video_title", "youtube_title")
-_BM25_VOCAB_SIZE = 2**16  # 65,536 buckets, collision-tolerant.
 
 
 # ── model singletons ──────────────────────────────────────────────────────────
+_bm25_model: Optional[SparseTextEmbedding] = None
 _bge_m3_model: Optional[SentenceTransformer] = None
 _siglip_tokenizer: Optional[Any] = None
 _siglip_model: Optional[Any] = None
@@ -95,26 +97,13 @@ def _l2_normalize(vec: Sequence[float]) -> List[float]:
     return [v / norm for v in values]
 
 
-def _tokenize(text: str) -> List[str]:
-    """Simple lowercase whitespace tokenizer for sparse lexical queries."""
-    return _normalize_text(text.lower()).split()
-
-
-def get_sparse_tf_vector(text: str) -> Optional[models.SparseVector]:
-    """
-    Build a sparse term-frequency vector compatible with Qdrant SparseVector.
-    Uses a hash-based vocabulary to avoid external BM25/Rust dependencies.
-    """
-    tokens = _tokenize(text)
-    if not tokens:
-        return None
-
-    tf: Dict[int, float] = {}
-    for token in tokens:
-        idx = hash(token) % _BM25_VOCAB_SIZE
-        tf[idx] = tf.get(idx, 0.0) + 1.0
-
-    return models.SparseVector(indices=list(tf.keys()), values=list(tf.values()))
+def get_bm25() -> SparseTextEmbedding:
+    """Lazy-load the same BM25 model used at upsert time (Qdrant/bm25)."""
+    global _bm25_model
+    if _bm25_model is None:
+        logger.info("Loading BM25: %s ...", BM25_MODEL)
+        _bm25_model = SparseTextEmbedding(model_name=BM25_MODEL)
+    return _bm25_model
 
 
 def get_bge_m3() -> SentenceTransformer:
@@ -139,14 +128,24 @@ def get_siglip_text_stack() -> Tuple[Any, Any, str]:
 
 # ── query encoders ────────────────────────────────────────────────────────────
 def encode_sparse_query(text: str) -> Optional[models.SparseVector]:
+    """Encode text using the same Qdrant/bm25 model used at upsert time."""
     text = _normalize_text(text)
     if not text:
         return None
 
     try:
-        return get_sparse_tf_vector(text)
+        results = list(get_bm25().embed([text]))
+        if not results:
+            return None
+        s = results[0]
+        if len(s.indices) == 0:
+            return None
+        return models.SparseVector(
+            indices=s.indices.tolist(),
+            values=s.values.tolist(),
+        )
     except Exception as exc:  # pragma: no cover
-        logger.warning("Sparse query encoding failed: %s", exc)
+        logger.warning("BM25 sparse query encoding failed: %s", exc)
         return None
 
 
@@ -176,22 +175,23 @@ def encode_siglip_text_query(text: str) -> Optional[List[float]]:
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            if hasattr(model, "get_text_features"):
-                outputs = model.get_text_features(**inputs)
-            else:  # fallback across transformer versions
-                raw = model(**inputs)
-                if hasattr(raw, "text_embeds") and raw.text_embeds is not None:
-                    outputs = raw.text_embeds
-                elif hasattr(raw, "pooler_output") and raw.pooler_output is not None:
-                    outputs = raw.pooler_output
-                elif hasattr(raw, "last_hidden_state") and raw.last_hidden_state is not None:
-                    outputs = raw.last_hidden_state.mean(dim=1)
-                else:
-                    outputs = raw[0]
-                    if getattr(outputs, "ndim", 0) == 3:
-                        outputs = outputs.mean(dim=1)
+            raw = model.get_text_features(**inputs) if hasattr(model, "get_text_features") else model(**inputs)
 
-        vec = outputs[0].detach().cpu().numpy().flatten().tolist()
+            # Extract the 1152-d text embedding from whatever output format we get.
+            if isinstance(raw, torch.Tensor):
+                features = raw
+            elif hasattr(raw, "pooler_output") and raw.pooler_output is not None:
+                features = raw.pooler_output
+            elif hasattr(raw, "text_embeds") and raw.text_embeds is not None:
+                features = raw.text_embeds
+            elif hasattr(raw, "last_hidden_state") and raw.last_hidden_state is not None:
+                features = raw.last_hidden_state.mean(dim=1)
+            else:
+                features = raw[0]
+                if getattr(features, "ndim", 0) == 3:
+                    features = features.mean(dim=1)
+
+        vec = features[0].detach().cpu().numpy().flatten().tolist()
         return _l2_normalize(vec)
     except Exception as exc:  # pragma: no cover
         logger.warning("SigLIP text query encoding failed: %s", exc)

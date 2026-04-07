@@ -145,19 +145,21 @@ python run_agentic_demo.py -q "cảnh đường phố ban đêm" -v
 | `--verbose, -v` | false | Show source scores + trace logs |
 | `--all-samples` | false | Run all built-in sample queries |
 
-## Running Tests
+## Diagnostic Tests
+
+These scripts are standalone tools for verifying individual pipeline components. Run them directly with `python` (pass `--query` if supported).
 
 ```bash
 cd retrieval/agentic_retrieval
 
-# Test LLM intent extraction
-python -m pytest test/test_llm_intent_extraction.py -v
+# Test LLM intent extraction (requires GEMINI_API_KEY)
+python test/test_llm_intent_extraction.py --query "a person in red shirt cooking"
 
 # Test modality routing
-python -m pytest test/test_modality_routing.py -v
+python test/test_modality_routing.py
 
 # Test Qdrant search (requires live Qdrant connection)
-python -m pytest test/test_qdrant_search.py -v
+python test/test_qdrant_search.py --query "example search"
 ```
 
 ## Services

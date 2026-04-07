@@ -19,7 +19,6 @@ The codebase appears to support a pipeline like:
 
 ## Read these first
 Before making non-trivial changes, inspect these locations first:
-- `file_structure.txt` or equivalent repo tree snapshot if present
 - root `README.md` if present
 - `data-processing/src/download/main.py`
 - `data-processing/src/embedding/embedding.py`

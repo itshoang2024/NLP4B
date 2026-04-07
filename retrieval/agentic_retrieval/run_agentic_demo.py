@@ -27,6 +27,18 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
+# ── OpenMP Workaround ────────────────────────────────────────────────────────
+# Fixes "OMP: Error #15: Initializing libiomp5md.dll, but found ... already initialized."
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# ── path setup ───────────────────────────────────────────────────────────────
+def _setup_paths():
+    root = Path(__file__).resolve().parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+_setup_paths()
+
 # ── load .env ────────────────────────────────────────────────────────────────
 from dotenv import load_dotenv
 

@@ -96,7 +96,7 @@ html, body,
     display: flex;
     align-items: baseline;
     gap: 14px;
-    padding: 72px 32px 8px;
+    padding: 100px 32px 8px; /* Increased top padding to avoid overlapping the brand logo */
 }
 
 .results-query {
@@ -337,7 +337,12 @@ html, body,
     transform: translateY(-1px);
 }
 
-/* ── Chat input bar ───────────────────────────────────────────────────────── */
+/* ── Chat input bar & Bottom Container ────────────────────────────────────── */
+[data-testid="stBottomBlockContainer"],
+[data-testid="stBottom"] {
+    background: transparent !important;
+}
+
 [data-testid="stChatInput"] > div,
 .stChatInputContainer {
     background-color: #e0ecff !important;

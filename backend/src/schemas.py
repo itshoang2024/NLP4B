@@ -29,8 +29,6 @@ class SearchResultItem(BaseModel):
     branch: str                             # "agentic" | "heuristic" | "fused"
     azure_url: Optional[str] = None
     youtube_link: Optional[str] = None
-    timestamp_sec: Optional[float] = None
-    caption: Optional[str] = None
     ocr_text: Optional[str] = None
     evidence: List[str] = Field(default_factory=list)
 

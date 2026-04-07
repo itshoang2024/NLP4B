@@ -32,13 +32,17 @@ def get_qdrant_api_key() -> str:
     return key
 
 
-# ── Embedding API ─────────────────────────────────────────────────────────────
+# ── API Keys & Base URLs ────────────────────────────────────────
 
 def get_embedding_api_url() -> str:
     url = os.getenv("EMBEDDING_API_BASE_URL", "").strip().rstrip("/")
     if not url:
         raise EnvironmentError("EMBEDDING_API_BASE_URL is not set in .env")
     return url
+
+def get_azure_blob_base_url() -> str:
+    # Not raising error if empty to avoid breaking local dev
+    return os.getenv("AZURE_BLOB_BASE_URL", "").strip().rstrip("/")
 
 
 # ── Gemini / LLM ─────────────────────────────────────────────────────────────

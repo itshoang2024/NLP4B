@@ -39,7 +39,7 @@ def fuse_candidates(retrieval_results: Dict[str, List[dict]], routing_weights: D
                     "fused_score": 0.0,
                     "source_scores": {},
                     "evidence": [],
-                    "raw_payload": {},
+                    "raw_payload": it.get("raw_payload", {}),
                 }
 
             merged[key]["source_scores"][source] = it["normalized_score"]

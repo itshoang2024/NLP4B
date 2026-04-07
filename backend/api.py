@@ -1,9 +1,6 @@
 """
 api.py — FastAPI application entry point for LookUp.ai backend.
-
-Run:
-    cd backend
-    uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+Run: uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 """
 
 import sys
@@ -35,7 +32,6 @@ from src.routes.search_route import router as search_router  # noqa: E402
 
 
 # ── App setup ─────────────────────────────────────────────────────────────────
-
 app = FastAPI(
     title="LookUp.ai — Unified Retrieval API",
     description=(
@@ -54,7 +50,6 @@ app.add_middleware(
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
-
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 def health_check():
     """Quick health check. Does NOT load models — stays fast."""
@@ -69,7 +64,6 @@ app.include_router(search_router, tags=["Retrieval"])
 
 
 # ── Dev entrypoint ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     import uvicorn
 

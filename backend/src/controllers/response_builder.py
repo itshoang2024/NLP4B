@@ -20,8 +20,8 @@ def build_response(
     """
     Convert internal Candidate dicts into the API response schema.
 
-    Pulls azure_url, youtube_link, timestamp_sec, caption, ocr_text
-    from raw_payload and flattens them into SearchResultItem.
+    Pulls azure_url, youtube_link, ocr_text from raw_payload
+    and flattens them into SearchResultItem.
     """
     results: List[SearchResultItem] = []
 
@@ -30,14 +30,12 @@ def build_response(
 
         results.append(SearchResultItem(
             rank=rank,
-            video_id=item.get("video_id", "unknown"),
-            frame_id=int(item.get("frame_id", 0)),
+            video_id=item.get("video_id") or payload.get("video_id") or "unknown",
+            frame_id=int(item.get("frame_id") or payload.get("frame_idx") or 0),
             score=round(float(item.get("score", 0.0)), 6),
             branch=item.get("branch", "unknown"),
             azure_url=payload.get("azure_url"),
             youtube_link=payload.get("youtube_link"),
-            timestamp_sec=payload.get("timestamp_sec"),
-            caption=payload.get("caption") or payload.get("detailed_caption"),
             ocr_text=payload.get("ocr_text"),
             evidence=item.get("evidence", []),
         ))

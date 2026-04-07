@@ -14,6 +14,7 @@
 | `POST` | `/embed/semantic` | BGE-M3 dense vector (1024d) | `DenseResponse` |
 | `POST` | `/embed/sparse` | BM25 sparse vector | `SparseResponse` |
 | `POST` | `/embed/visual` | SigLIP dense vector (1152d) | `DenseResponse` |
+| `POST` | **`/embed/query`** | **⭐ Unified — all 4 vectors + NLP** | **`QueryResponse`** |
 | `GET` | `/docs` | Interactive Swagger UI | HTML |
 
 ---
@@ -190,6 +191,47 @@ results = client.query_points(
     limit=10,
 )
 ```
+
+---
+
+## `POST /embed/query` ⭐ Unified Endpoint
+
+**One call → all 4 vectors.** NLP-parsed query → semantic + visual + object sparse + OCR sparse.
+
+### Pipeline
+
+```
+User Query: '5 people sitting around table with "Coca Cola" sign'
+  │
+  ├─→ regex: "Coca Cola" → BM25 → ocr_sparse
+  ├─→ spaCy POS → [people, table, sign] (NOUNs only)
+  │     └─→ WordNet filter (physical only) + Top-3 synonyms
+  │           → "people person human table desk stand sign placard banner"
+  │           → BM25 → object_sparse
+  ├─→ full query → BGE-M3 → semantic_dense (1024d)
+  └─→ full query → SigLIP → visual_dense (1152d)
+```
+
+### Request
+
+```json
+{ "text": "5 people sitting around table with \"Coca Cola\" sign" }
+```
+
+### Response `200 OK` — `QueryResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `semantic_dense` | `DenseResponse` | BGE-M3 1024d (L2-normalized) |
+| `visual_dense` | `DenseResponse` | SigLIP 1152d |
+| `object_sparse` | `SparseResponse` | BM25 from nouns + synonyms |
+| `ocr_sparse` | `SparseResponse` | BM25 from quoted text |
+| `nlp_analysis` | `dict` | Objects, counts, synonyms, OCR texts |
+| `total_latency_ms` | `float` | End-to-end server time |
+
+### WordNet Domain Filter
+
+Only physical-object nouns pass (`noun.artifact`, `noun.person`, `noun.animal`, `noun.food`, `noun.plant`, `noun.body`). Abstract nouns filtered out.
 
 ---
 

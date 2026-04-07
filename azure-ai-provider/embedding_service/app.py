@@ -85,6 +85,13 @@ async def lifespan(app: FastAPI):
     siglip_model = AutoModel.from_pretrained(SIGLIP_MODEL_ID).to(DEVICE).eval()
     logger.info(f"  ✅ SigLIP ready ({time.time()-t2:.1f}s)")
 
+    # ── 4. NLP Pipeline (spaCy + WordNet) ─────────────────────────────
+    t3 = time.time()
+    logger.info("[4/4] Loading NLP pipeline (spaCy + WordNet)...")
+    from query_processor import initialize as init_nlp
+    init_nlp()
+    logger.info(f"  ✅ NLP pipeline ready ({time.time()-t3:.1f}s)")
+
     total = time.time() - t0
     logger.info("═" * 60)
     logger.info(f"  ✅ All models loaded in {total:.1f}s — Server ready!")
@@ -255,9 +262,121 @@ async def embed_visual(request: EmbedRequest):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 4. UNIFIED QUERY — All 4 vectors in one call
+# ══════════════════════════════════════════════════════════════════════════════
+
+class QueryResponse(BaseModel):
+    semantic_dense: DenseResponse
+    visual_dense: DenseResponse
+    object_sparse: SparseResponse
+    ocr_sparse: SparseResponse
+    nlp_analysis: dict
+    total_latency_ms: float
+
+
+def _encode_bm25(text: str) -> SparseResponse:
+    """BM25 encode helper — returns empty SparseResponse if text is blank."""
+    if not text or bm25_model is None:
+        return SparseResponse(
+            indices=[], values=[], model=BM25_MODEL_ID, nnz=0, latency_ms=0.0,
+        )
+    t0 = time.time()
+    results = list(bm25_model.embed([text]))
+    lat = (time.time() - t0) * 1000
+    if not results or len(results[0].indices) == 0:
+        return SparseResponse(
+            indices=[], values=[], model=BM25_MODEL_ID, nnz=0, latency_ms=round(lat, 2),
+        )
+    s = results[0]
+    return SparseResponse(
+        indices=s.indices.tolist(), values=s.values.tolist(),
+        model=BM25_MODEL_ID, nnz=len(s.indices), latency_ms=round(lat, 2),
+    )
+
+
+def _encode_siglip(text: str) -> DenseResponse:
+    """SigLIP text→visual encode helper."""
+    t0 = time.time()
+    inputs = siglip_tokenizer(
+        [text], padding="max_length", truncation=True, return_tensors="pt",
+    ).to(DEVICE)
+    with torch.no_grad():
+        out = siglip_model.get_text_features(**inputs)
+    feat = out if isinstance(out, torch.Tensor) else (
+        out.text_embeds if hasattr(out, "text_embeds") and out.text_embeds is not None
+        else out.pooler_output if hasattr(out, "pooler_output") and out.pooler_output is not None
+        else out[0] if isinstance(out, tuple) else out
+    )
+    if feat.ndim == 3:
+        feat = feat.mean(dim=1)
+    vec = feat[0].cpu().numpy().flatten().astype("float32").tolist()
+    return DenseResponse(
+        embedding=vec, model=SIGLIP_MODEL_ID,
+        dim=len(vec), latency_ms=round((time.time() - t0) * 1000, 2),
+    )
+
+
+@app.post("/embed/query", response_model=QueryResponse)
+async def embed_query(request: EmbedRequest):
+    """
+    Unified: query → all 4 vectors + NLP analysis.
+
+    Pipeline:
+      1. NLP: spaCy + WordNet → objects + OCR extraction
+      2. BGE-M3: original query → semantic dense (1024d)
+      3. SigLIP: original query → visual dense (1152d)
+      4. BM25: expanded nouns+synonyms → object sparse
+      5. BM25: regex-extracted quotes → OCR sparse
+    """
+    from query_processor import process_query
+
+    if bge_m3_model is None or siglip_model is None or bm25_model is None:
+        raise HTTPException(503, "Models not loaded yet")
+
+    t_total = time.time()
+
+    # 1. NLP parse
+    analysis = process_query(request.text)
+
+    # 2. Semantic dense
+    t0 = time.time()
+    sem_vec = bge_m3_model.encode(request.text, normalize_embeddings=True)
+    sem_emb = sem_vec.tolist() if hasattr(sem_vec, "tolist") else list(sem_vec)
+    sem_resp = DenseResponse(
+        embedding=sem_emb, model=BGE_M3_MODEL_ID,
+        dim=len(sem_emb), latency_ms=round((time.time() - t0) * 1000, 2),
+    )
+
+    # 3. Visual dense
+    vis_resp = _encode_siglip(request.text)
+
+    # 4. Object sparse
+    obj_resp = _encode_bm25(analysis.object_search_text)
+
+    # 5. OCR sparse
+    ocr_resp = _encode_bm25(analysis.ocr_search_text)
+
+    return QueryResponse(
+        semantic_dense=sem_resp,
+        visual_dense=vis_resp,
+        object_sparse=obj_resp,
+        ocr_sparse=ocr_resp,
+        nlp_analysis={
+            "original_query": analysis.original_query,
+            "objects": analysis.objects,
+            "ocr_texts": analysis.ocr_texts,
+            "object_search_text": analysis.object_search_text,
+            "ocr_search_text": analysis.ocr_search_text,
+        },
+        total_latency_ms=round((time.time() - t_total) * 1000, 2),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

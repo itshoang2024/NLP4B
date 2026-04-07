@@ -24,16 +24,23 @@ RUN pip install --no-cache-dir \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4) VERIFY all critical imports at build time
+# 4) spaCy model + NLTK data (baked into image)
+RUN python -m spacy download en_core_web_sm
+RUN python -c "import nltk; nltk.download('wordnet', quiet=True); nltk.download('omw-1.4', quiet=True)"
+
+# 5) Verify all imports at build time
 RUN python -c "\
-import sentencepiece; print('✅ sentencepiece', sentencepiece.__version__); \
-import torch; print('✅ torch', torch.__version__); \
-from transformers import AutoTokenizer, AutoModel; print('✅ transformers OK'); \
-from sentence_transformers import SentenceTransformer; print('✅ sentence-transformers OK'); \
-from fastembed import SparseTextEmbedding; print('✅ fastembed OK'); \
+import sentencepiece; print('OK sentencepiece'); \
+import torch; print('OK torch'); \
+from transformers import AutoTokenizer; print('OK transformers'); \
+from sentence_transformers import SentenceTransformer; print('OK sentence-transformers'); \
+from fastembed import SparseTextEmbedding; print('OK fastembed'); \
+import spacy; spacy.load('en_core_web_sm'); print('OK spacy'); \
+from nltk.corpus import wordnet; print('OK wordnet'); \
 "
 
 COPY app.py .
+COPY query_processor.py .
 
 ENV HF_HOME=/root/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/root/.cache/huggingface/hub

@@ -13,6 +13,10 @@ sentence-transformers>=3.3.0
 fastembed>=0.4.0
 transformers>=4.45.0
 sentencepiece==0.2.0
+
+# NLP pipeline (query_processor)
+spacy>=3.7.0
+nltk>=3.9.0
 # PyTorch CPU — installed separately in Dockerfile via extra-index-url
 # torch>=2.5.0
 

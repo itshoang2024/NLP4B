@@ -25,19 +25,33 @@ logger = logging.getLogger(__name__)
 _nlp = None
 _wn_ready = False
 
-# Physical/visible object domains only
-VALID_LEXNAMES = frozenset({
-    "noun.artifact", "noun.person", "noun.animal",
-    "noun.food", "noun.plant", "noun.body",
-    "noun.object", "noun.substance",
+# ── Domain filter strategy: EXCLUDE abstract nouns ───────────────────────────
+# Instead of allowing specific categories (which misses edge cases),
+# we EXCLUDE known abstract/non-visual categories.
+# Anything not explicitly excluded is treated as potentially physical/visible.
+ABSTRACT_LEXNAMES = frozenset({
+    "noun.cognition",    # idea, concept, knowledge, memory
+    "noun.feeling",      # happiness, anger, fear
+    "noun.attribute",    # size, color, quality
+    "noun.act",          # action, behavior, movement
+    "noun.event",        # event, occasion, incident
+    "noun.time",         # time, moment, duration
+    "noun.process",      # process, growth, change
+    "noun.state",        # state, condition, health
+    "noun.relation",     # relation, connection, proportion
+    "noun.motive",       # reason, cause, purpose
+    "noun.phenomenon",   # phenomenon, effect
+    "noun.quantity",     # amount, number, measure
+    "noun.Tops",         # root/abstract tops
 })
 
 STOP_NOUNS = frozenset({
-    "scene", "background", "view", "area", "side", "way", "thing",
-    "time", "room", "place", "part", "end", "top", "bottom",
-    "left", "right", "front", "back", "middle", "center",
-    "interior", "exterior", "setting", "moment", "shot", "frame",
+    "scene", "background", "view", "way", "thing",
+    "time", "part", "end", "moment", "shot", "frame",
+    "setting", "middle", "center", "type", "kind", "form",
+    "point", "line", "use", "case", "level", "side",
 })
+
 
 OCR_PATTERN = re.compile(r"""["'\u201c\u201d\u2018\u2019]([^"'\u201c\u201d\u2018\u2019]+)["'\u201c\u201d\u2018\u2019]""")
 
@@ -75,11 +89,13 @@ def initialize():
 
 @lru_cache(maxsize=2048)
 def _is_valid(word: str) -> bool:
+    """Return True if word is a physical/visible noun (not purely abstract)."""
     from nltk.corpus import wordnet as wn
-    for syn in wn.synsets(word, pos=wn.NOUN)[:3]:
-        if syn.lexname() in VALID_LEXNAMES:
-            return True
-    return False
+    synsets = wn.synsets(word, pos=wn.NOUN)[:3]
+    if not synsets:
+        return False
+    # Valid if ANY top synset is not in the abstract list
+    return any(syn.lexname() not in ABSTRACT_LEXNAMES for syn in synsets)
 
 
 @lru_cache(maxsize=2048)
@@ -99,7 +115,8 @@ def _synonyms(word: str, k: int = 3) -> Tuple[str, ...]:
 @dataclass
 class QueryAnalysis:
     original_query: str
-    objects: List[dict]
+    objects: List[dict]           # full objects with synonyms
+    object_counts: dict           # {object_name: count} — only objects WITH a count
     ocr_texts: List[str]
     object_search_text: str
     ocr_search_text: str
@@ -150,9 +167,17 @@ def process_query(text: str) -> QueryAnalysis:
     obj_text = " ".join(terms) if terms else clean
     ocr_text = " ".join(ocr_texts)
 
+    # 4. object_counts — {name: count} for objects with explicit numeric count
+    object_counts = {
+        o["object"]: o["count"]
+        for o in objects
+        if o["count"] is not None
+    }
+
     return QueryAnalysis(
         original_query=text,
         objects=objects,
+        object_counts=object_counts,
         ocr_texts=ocr_texts,
         object_search_text=obj_text,
         ocr_search_text=ocr_text,

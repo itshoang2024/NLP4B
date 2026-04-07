@@ -364,6 +364,7 @@ async def embed_query(request: EmbedRequest):
         nlp_analysis={
             "original_query": analysis.original_query,
             "objects": analysis.objects,
+            "object_counts": analysis.object_counts,
             "ocr_texts": analysis.ocr_texts,
             "object_search_text": analysis.object_search_text,
             "ocr_search_text": analysis.ocr_search_text,

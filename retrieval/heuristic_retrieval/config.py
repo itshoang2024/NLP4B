@@ -37,15 +37,20 @@ def get_qdrant_api_key() -> str:
     return key
 
 
+def get_embedding_api_url() -> str:
+    url = os.getenv("API_BASE_URL", "").strip().rstrip("/")
+    if not url:
+        raise EnvironmentError("API_BASE_URL is not set in .env")
+    return url
+
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 COLLECTION_NAME: str = "keyframes_v1"
-
-SIGLIP_MODEL_ID: str = "google/siglip-so400m-patch14-384"
-BGE_M3_MODEL_ID:  str = "BAAI/bge-m3"
 
 SIGLIP_DIM: int = 1152
 BGE_M3_DIM: int  = 1024
 
 DEFAULT_TOP_K: int        = 10
 DEFAULT_PREFETCH: int     = 50
+

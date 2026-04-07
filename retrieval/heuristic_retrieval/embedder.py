@@ -1,116 +1,111 @@
 """
-embedder.py — Lazy singleton embedding models: SigLIP (visual) + BGE-M3 (semantic).
+embedder.py — Remote embedding via Azure-deployed Embedding-as-a-Service.
 
-Both models are loaded once on first call and reused across requests.
-Runs on CUDA if available, falls back to CPU automatically.
+Instead of loading models locally, all encoding is delegated to the
+remote FastAPI server at API_BASE_URL (see retrieval/.env).
+
+Endpoints used:
+  POST /embed/visual   → SigLIP 1152d  (for 'keyframe-dense' in Qdrant)
+  POST /embed/semantic → BGE-M3 1024d  (for 'keyframe-caption-dense' in Qdrant)
+
+Contract reference: azure-ai-provider/API_CONTRACT.md
 """
 
-import torch
-from typing import Optional, Any, Tuple
+import httpx
+from config import get_embedding_api_url, SIGLIP_DIM, BGE_M3_DIM
 
-from config import (
-    SIGLIP_MODEL_ID, BGE_M3_MODEL_ID,
-    SIGLIP_DIM, BGE_M3_DIM,
-)
+# ── Used by api.py for the /health endpoint ───────────────────────────────────
+DEVICE = "remote (Azure VM)"
 
-# ── Device ────────────────────────────────────────────────────────────────────
-
-DEVICE: str = "cuda" if torch.cuda.is_available() else "cpu"
-
-# ── Module-level singletons (None until first call) ───────────────────────────
-
-_siglip_tokenizer: Optional[Any] = None
-_siglip_model:     Optional[Any] = None
-_bge_m3_model:     Optional[Any] = None
+# Connection timeout per request (seconds).
+# Azure VM P95 latency: semantic ~1.2s, visual ~0.72s
+_TIMEOUT = httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)
 
 
-# ── Loaders ───────────────────────────────────────────────────────────────────
-
-def _load_siglip() -> Tuple[Any, Any]:
-    """Load SigLIP tokenizer + model onto DEVICE (singleton)."""
-    global _siglip_tokenizer, _siglip_model
-
-    if _siglip_tokenizer is None or _siglip_model is None:
-        from transformers import AutoTokenizer, AutoModel
-
-        print(f"[embedder] Loading SigLIP ({SIGLIP_MODEL_ID}) on {DEVICE}...")
-        _siglip_tokenizer = AutoTokenizer.from_pretrained(SIGLIP_MODEL_ID)
-        _siglip_model = (
-            AutoModel.from_pretrained(SIGLIP_MODEL_ID)
-            .to(DEVICE)
-            .eval()
-        )
-        print(f"[embedder] SigLIP ready on {DEVICE}.")
-
-    return _siglip_tokenizer, _siglip_model
-
-
-def _load_bge_m3() -> Any:
-    """Load BGE-M3 SentenceTransformer onto DEVICE (singleton)."""
-    global _bge_m3_model
-
-    if _bge_m3_model is None:
-        from sentence_transformers import SentenceTransformer
-
-        print(f"[embedder] Loading BGE-M3 ({BGE_M3_MODEL_ID}) on {DEVICE}...")
-        _bge_m3_model = SentenceTransformer(BGE_M3_MODEL_ID, device=DEVICE)
-        print(f"[embedder] BGE-M3 ready on {DEVICE}.")
-
-    return _bge_m3_model
+def _get_base_url() -> str:
+    """Return the embedding service base URL from .env, cached per call."""
+    return get_embedding_api_url()
 
 
 # ── Public encode functions ───────────────────────────────────────────────────
 
 def encode_visual(query: str) -> list:
     """
-    Encode a text query into a SigLIP dense vector (1152-d).
-    Used for the 'keyframe-dense' vector field in Qdrant.
+    Encode a text query into a SigLIP dense vector (1152-d) via remote API.
+    Maps to the 'keyframe-dense' vector field in Qdrant.
+
+    Calls: POST {API_BASE_URL}/embed/visual
+    Body:  {"text": query}
+    Returns: List[float] of length 1152
     """
-    tokenizer, model = _load_siglip()
+    url = f"{_get_base_url()}/embed/visual"
 
-    inputs = tokenizer(
-        [query],
-        padding="max_length",
-        truncation=True,
-        return_tensors="pt",
-    ).to(DEVICE)
+    try:
+        response = httpx.post(url, json={"text": query}, timeout=_TIMEOUT)
+        response.raise_for_status()
+    except httpx.ConnectError:
+        raise RuntimeError(
+            f"Cannot connect to embedding service at {_get_base_url()}. "
+            "Check that the Azure VM is running and API_BASE_URL is correct in .env."
+        )
+    except httpx.TimeoutException:
+        raise RuntimeError(
+            f"Embedding service timed out on /embed/visual (query: '{query[:50]}...')"
+        )
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(
+            f"Embedding service /embed/visual returned {e.response.status_code}: "
+            f"{e.response.text[:200]}"
+        )
 
-    with torch.no_grad():
-        outputs = model.get_text_features(**inputs)
-
-    # Normalise various output shapes
-    if isinstance(outputs, torch.Tensor):
-        features = outputs
-    elif hasattr(outputs, "text_embeds") and outputs.text_embeds is not None:
-        features = outputs.text_embeds
-    elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-        features = outputs.pooler_output
-    else:
-        features = outputs[0] if isinstance(outputs, tuple) else outputs
-        if features.ndim == 3:
-            features = features.mean(dim=1)
-
-    vec = features[0].cpu().numpy().flatten().astype("float32")
+    data = response.json()
+    vec: list = data["embedding"]
 
     if len(vec) != SIGLIP_DIM:
-        raise ValueError(f"SigLIP produced dim={len(vec)}, expected {SIGLIP_DIM}")
+        raise ValueError(
+            f"SigLIP remote returned dim={len(vec)}, expected {SIGLIP_DIM}. "
+            "Check the Azure VM model version."
+        )
 
-    return vec.tolist()
+    return vec
 
 
 def encode_semantic(query: str) -> list:
     """
-    Encode a text query into a BGE-M3 dense vector (1024-d).
-    Used for the 'keyframe-caption-dense' vector field in Qdrant.
+    Encode a text query into a BGE-M3 dense vector (1024-d) via remote API.
+    Maps to the 'keyframe-caption-dense' vector field in Qdrant.
+
+    Calls: POST {API_BASE_URL}/embed/semantic
+    Body:  {"text": query}
+    Returns: List[float] of length 1024
     """
-    model = _load_bge_m3()
+    url = f"{_get_base_url()}/embed/semantic"
 
-    vec = model.encode(query, normalize_embeddings=True, device=DEVICE)
+    try:
+        response = httpx.post(url, json={"text": query}, timeout=_TIMEOUT)
+        response.raise_for_status()
+    except httpx.ConnectError:
+        raise RuntimeError(
+            f"Cannot connect to embedding service at {_get_base_url()}. "
+            "Check that the Azure VM is running and API_BASE_URL is correct in .env."
+        )
+    except httpx.TimeoutException:
+        raise RuntimeError(
+            f"Embedding service timed out on /embed/semantic (query: '{query[:50]}...')"
+        )
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(
+            f"Embedding service /embed/semantic returned {e.response.status_code}: "
+            f"{e.response.text[:200]}"
+        )
 
-    if hasattr(vec, "tolist"):
-        vec = vec.tolist()
+    data = response.json()
+    vec: list = data["embedding"]
 
     if len(vec) != BGE_M3_DIM:
-        raise ValueError(f"BGE-M3 produced dim={len(vec)}, expected {BGE_M3_DIM}")
+        raise ValueError(
+            f"BGE-M3 remote returned dim={len(vec)}, expected {BGE_M3_DIM}. "
+            "Check the Azure VM model version."
+        )
 
     return vec

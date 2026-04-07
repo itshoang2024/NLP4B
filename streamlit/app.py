@@ -22,11 +22,11 @@ DEFAULT_TOP_K = 10
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def call_search_api(query: str, top_k: int = DEFAULT_TOP_K) -> dict | None:
-    """POST /search to the FastAPI backend. Returns parsed JSON or None on error."""
+    """POST /search to the unified backend API."""
     try:
         resp = requests.post(
             f"{API_BASE_URL}/search",
-            json={"query": query, "top_k": top_k, "prefetch_limit": 50},
+            json={"raw_query": query, "top_k": top_k},
             timeout=120,
         )
         resp.raise_for_status()
@@ -43,20 +43,23 @@ def call_search_api(query: str, top_k: int = DEFAULT_TOP_K) -> dict | None:
 
 
 def render_result_card(result: dict, idx: int) -> str:
-    """Build an HTML card string for one search result."""
-    p = result.get("payload", {})
+    """Build an HTML card string for one search result (flat schema)."""
+    video_id      = result.get("video_id") or "—"
+    frame_id      = result.get("frame_id", "—")
+    timestamp_sec = result.get("timestamp_sec", 0) or 0
+    caption       = result.get("caption") or ""
+    ocr_text      = result.get("ocr_text") or ""
+    azure_url     = result.get("azure_url") or ""
+    youtube_link  = result.get("youtube_link") or ""
+    score         = result.get("score", 0)
+    branch        = result.get("branch", "")
+    evidence      = result.get("evidence", [])
 
-    video_id      = p.get("video_id") or "—"
-    frame_idx     = p.get("frame_idx", "—")
-    timestamp_sec = p.get("timestamp_sec", 0) or 0
-    caption       = p.get("caption") or p.get("detailed_caption") or ""
-    ocr_text      = p.get("ocr_text") or ""
-    azure_url     = p.get("azure_url") or ""
-    youtube_link  = p.get("youtube_link") or ""
-    rrf_score     = result.get("rrf_score", 0)
+    # Score bar width (adjusted for RRF score range)
+    bar_pct = min(int(score * 2000), 100)
 
-    # Score bar width (RRF scores are typically 0.01–0.07 range)
-    bar_pct = min(int(rrf_score * 2000), 100)
+    # Branch badge color
+    branch_color = {"agentic": "#6366f1", "heuristic": "#10b981", "fused": "#f59e0b"}.get(branch, "#6b7280")
 
     img_html = (
         f'<img src="{azure_url}" class="card-img" onerror="this.style.display=\'none\'">'
@@ -79,6 +82,11 @@ def render_result_card(result: dict, idx: int) -> str:
         if ocr_text else ""
     )
 
+    evidence_html = (
+        f'<div style="font-size:0.7rem;color:#9ca3af;margin-top:4px;">Sources: {", ".join(evidence)}</div>'
+        if evidence else ""
+    )
+
     return f"""
     <div class="result-card" style="animation-delay: {idx * 0.06}s">
       <div class="card-rank">#{idx + 1}</div>
@@ -86,18 +94,20 @@ def render_result_card(result: dict, idx: int) -> str:
       <div class="card-body">
         <div class="card-meta-row">
           <span class="meta-pill video">🎬 {video_id}</span>
-          <span class="meta-pill frame">🖼 Frame {frame_idx}</span>
+          <span class="meta-pill frame">🖼 Frame {frame_id}</span>
           <span class="meta-pill time">⏱ {timestamp_sec:.1f}s</span>
+          <span class="meta-pill" style="background:{branch_color};color:white;font-size:0.65rem;">{branch}</span>
         </div>
         <div class="score-row">
-          <span class="score-label">RRF</span>
+          <span class="score-label">Score</span>
           <div class="score-bar-bg">
             <div class="score-bar-fill" style="width:{bar_pct}%"></div>
           </div>
-          <span class="score-val">{rrf_score:.5f}</span>
+          <span class="score-val">{score:.5f}</span>
         </div>
         {caption_html}
         {ocr_html}
+        {evidence_html}
         {yt_html}
       </div>
     </div>
@@ -105,14 +115,16 @@ def render_result_card(result: dict, idx: int) -> str:
 
 
 def render_latency_badge(latency: dict) -> str:
-    enc  = latency.get("encode_ms", 0)
-    srch = latency.get("search_ms", 0)
-    tot  = latency.get("total_ms", 0)
+    agentic = latency.get("agentic_ms", 0)
+    heuristic = latency.get("heuristic_ms", 0)
+    rerank = latency.get("rerank_ms", 0)
+    total = latency.get("total_ms", 0)
     return f"""
     <div class="latency-bar">
-      <span class="lat-chip enc">⚡ Encode {enc:.0f}ms</span>
-      <span class="lat-chip srch">🔍 Search {srch:.0f}ms</span>
-      <span class="lat-chip tot">🕐 Total {tot:.0f}ms</span>
+      <span class="lat-chip enc">🤖 Agentic {agentic:.0f}ms</span>
+      <span class="lat-chip srch">📊 Heuristic {heuristic:.0f}ms</span>
+      <span class="lat-chip" style="background:rgba(245,158,11,0.15);color:#f59e0b;">🔀 Rerank {rerank:.0f}ms</span>
+      <span class="lat-chip tot">🕐 Total {total:.0f}ms</span>
     </div>
     """
 
@@ -126,7 +138,7 @@ if "results_data" not in st.session_state:
     <div class="hero-center">
       <div class="hero-sparkle">✨</div>
       <h1 class="hero-title">Tìm kiếm bằng ngôn ngữ tự nhiên</h1>
-      <p class="hero-sub">Nhập mô tả cảnh quay bạn muốn tìm — hệ thống sẽ truy vấn qua SigLIP + BGE-M3</p>
+      <p class="hero-sub">Nhập mô tả cảnh quay bạn muốn tìm — hệ thống sẽ truy vấn qua Agentic + Heuristic retrieval</p>
       <div class="chip-row">
         <span class="chip">🏃 người đang chạy ngoài đường</span>
         <span class="chip">🍜 cảnh nấu ăn ban ngày</span>
@@ -169,7 +181,6 @@ if "results_data" in st.session_state:
 search_query = st.chat_input("Mô tả cảnh bạn muốn tìm...")
 
 if search_query:
-    # Show spinner while calling API
     spinner_placeholder = st.empty()
     spinner_placeholder.markdown("""
     <div class="custom-loader-container">
@@ -185,7 +196,7 @@ if search_query:
           <path d="M19 16.5c.2-.6 1-.6 1.2 0l.4 1.3c.1.2.3.4.5.5l1.3.4c.6.2.6 1 0 1.2l-1.3.4c-.2.1-.4.3-.5.5l-.4 1.3c-.2.6-1 .6-1.2 0l-.4-1.3c-.1-.2-.3-.4-.5-.5l-1.3-.4c-.6-.2-.6-1 0-1.2l1.3-.4c.2-.1.4-.3.5-.5l.4-1.3z" fill="url(#sparkle-grad)"/>
         </svg>
       </div>
-      <div class="custom-loader-text">Đang mã hóa & tìm kiếm...</div>
+      <div class="custom-loader-text">Đang tìm kiếm (Agentic + Heuristic)...</div>
     </div>
     """, unsafe_allow_html=True)
 

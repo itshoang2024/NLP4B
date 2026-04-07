@@ -1,8 +1,14 @@
+"""
+retrieval node — parallel multi-modal search against Qdrant.
+
+Migrated from: retrieval/agentic_retrieval/nodes/retrieval.py
+"""
+
 from __future__ import annotations
 from typing import List
 
-from state import AgentState
-from services.qdrant_search import QdrantSearchService
+from ..state import AgentState
+from ..qdrant_search import QdrantSearchService
 
 
 def build_query_texts(query_bundle: dict, query_intent: dict) -> List[str]:
@@ -21,7 +27,6 @@ def build_query_texts(query_bundle: dict, query_intent: dict) -> List[str]:
         if rw and rw not in texts:
             texts.append(rw)
 
-    # intent-driven compact query
     objects = query_intent.get("objects", []) or []
     attributes = query_intent.get("attributes", []) or []
     actions = query_intent.get("actions", []) or []
@@ -37,17 +42,7 @@ def build_query_texts(query_bundle: dict, query_intent: dict) -> List[str]:
 
 
 def build_ocr_query_texts(query_intent: dict) -> List[str]:
-    """Build OCR-specific query texts using ONLY the text_cues from intent.
-
-    Rationale: BM25 sparse search tokenizes the full query. If the full
-    natural-language sentence (e.g. "Khung hình có chữ 'Quân A.P'") is
-    used, common words like 'khung hình' will match hallucinated OCR text
-    in many keyframes, inflating their scores.
-
-    By restricting to text_cues only (e.g. ["Quân A.P"]), we ensure the
-    BM25 match is precise and only scores frames that actually contain
-    the expected on-screen text.
-    """
+    """Build OCR-specific query texts using ONLY the text_cues from intent."""
     text_cues = query_intent.get("text_cues", []) or []
     texts = [cue.strip() for cue in text_cues if isinstance(cue, str) and cue.strip()]
     return texts[:5]

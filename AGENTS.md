@@ -19,16 +19,16 @@ The codebase appears to support a pipeline like:
 
 ## Read these first
 Before making non-trivial changes, inspect these locations first:
-- `file_structure.txt` or equivalent repo tree snapshot if present
 - root `README.md` if present
 - `data-processing/src/download/main.py`
 - `data-processing/src/embedding/embedding.py`
 - `data-processing/src/keyframe_extraction/LMSKE.py`
 - `data-processing/src/object_detection/object_detection.py`
 - `data-processing/src/azure_migrator.py`
-- `retrieval/agentic_retrieval/graph.py`
-- `retrieval/agentic_retrieval/nodes/`
-- `retrieval/agentic_retrieval/services/`
+- `backend/api.py`
+- `backend/src/controllers/search_controller.py`
+- `backend/src/services/agentic_retrieve/graph.py`
+- `backend/src/services/agentic_retrieve/nodes/`
 - `streamlit/app.py`
 - `requirements.txt` files in each major module
 
@@ -56,18 +56,29 @@ Important subareas:
 
 This area is the main artifact producer.
 
-### `retrieval/agentic_retrieval/`
-Retrieval-time orchestration layer.
+### `backend/`
+Unified retrieval API (FastAPI). This is the **active** online serving module.
 
 Important parts:
-- `graph.py`: likely the top-level retrieval graph
-- `state.py`: shared state object(s)
-- `nodes/`: intent extraction, normalization, retrieval, fusion, rerank, routing
-- `services/`: LLM, translator, scoring, qdrant search, other runtime helpers
-- `test/`: tests and notebook demos
-- `utils/`: JSON and logging utilities
+- `api.py`: FastAPI entry point (port 8000), `/health` and `/search` endpoints
+- `src/middlewares/search_middleware.py`: query cleaning, language detection, translation
+- `src/controllers/search_controller.py`: orchestrates agentic + heuristic services, cross-source RRF rerank
+- `src/controllers/rerank.py`: Reciprocal Rank Fusion merging logic
+- `src/controllers/response_builder.py`: flattens raw_payload → SearchResultItem
+- `src/services/agentic_retrieve/`: LangGraph pipeline (5 nodes, no normalization node)
+- `src/services/heuristic_retrieve/`: mock stub (WIP — to be implemented)
+- `src/services/translator.py`: shared language detection + Gemini translation
+- `src/config.py`: unified env loading
+- `src/schemas.py`: shared Pydantic models + TypedDicts
+- `test/run_agentic_demo.py`: standalone CLI demo
 
-This area should be treated as the online decision-making path.
+This area is the online decision-making path and the primary serving layer.
+
+### `retrieval/agentic_retrieval/` (legacy)
+
+> ⚠️ **Migrated to `backend/src/services/agentic_retrieve/`.** Kept for reference only.
+
+Original standalone LangGraph pipeline with 6 nodes (including normalization).
 
 ### `streamlit/`
 User-facing app / demo layer.
@@ -162,12 +173,14 @@ Entry point:
 Expected result:
 - one combined JSON per video folder
 
-### Workflow E: retrieval-time execution
-Entry points likely include:
-- `retrieval/agentic_retrieval/run_agentic_demo.py`
-- retrieval graph / test notebooks / service adapters
+### Workflow E: retrieval-time execution (backend API)
+Entry points:
+- `backend/api.py` — FastAPI server (`uvicorn api:app --port 8000`)
+- `backend/test/run_agentic_demo.py` — standalone agentic demo (CLI)
 
-Confirm the current supported invocation path before editing docs or commands.
+Expected result:
+- `/health` returns `{"status": "ok", "collection": "keyframes_v1"}`
+- `/search` returns `SearchResponse` with ranked results from both branches
 
 ## Safe change rules
 
@@ -236,11 +249,19 @@ Check:
 
 ### If you modify retrieval graph, nodes, or services
 Check:
-- state schema compatibility
+- state schema compatibility (`backend/src/services/agentic_retrieve/state.py`)
 - service adapter expectations
-- prompt / routing / normalization assumptions
+- prompt / routing assumptions (normalization is now in middleware, not a node)
 - rerank / fusion ordering semantics
-- demo notebooks and tests in `retrieval/agentic_retrieval/test/`
+- demo script: `backend/test/run_agentic_demo.py`
+
+### If you modify backend middleware, controller, or route
+Check:
+- `query_bundle` dict keys expected by both service branches
+- `SearchResponse` / `SearchResultItem` schema consumed by `streamlit/app.py`
+- cross-source RRF rerank logic in `controllers/rerank.py`
+- response_builder payload field extraction
+- env vars in `src/config.py`
 
 ### If you modify Streamlit app code
 Check:
@@ -276,6 +297,7 @@ Ask these before large refactors or interface changes:
 These points should be revalidated against code if you are about to depend on them heavily:
 - the repository supports an end-to-end multimodal video retrieval workflow
 - `data-processing/` is the canonical artifact-generation area
-- `retrieval/agentic_retrieval/` is the online orchestration area
-- `streamlit/` is primarily a presentation / demo layer
+- `backend/` is the active online serving layer (unified FastAPI API)
+- `retrieval/agentic_retrieval/` is legacy — migrated to `backend/src/services/agentic_retrieve/`
+- `streamlit/` is the presentation / demo layer — calls `backend/` API
 - some scripts were optimized for notebook-first environments before being hardened for repository-scale development

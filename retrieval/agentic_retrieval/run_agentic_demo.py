@@ -8,7 +8,7 @@ Prerequisites
      QDRANT_URL=<your-qdrant-cloud-url>
      QDRANT_API_KEY=<your-qdrant-api-key>
      GEMINI_API_KEY=<your-gemini-api-key>
-
+     EMBEDDING_API_BASE_URL=http://<azure-vm-ip>:8000
 Usage
 ─────
     cd retrieval/agentic_retrieval
@@ -26,6 +26,18 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List
+
+# ── OpenMP Workaround ────────────────────────────────────────────────────────
+# Fixes "OMP: Error #15: Initializing libiomp5md.dll, but found ... already initialized."
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# ── path setup ───────────────────────────────────────────────────────────────
+def _setup_paths():
+    root = Path(__file__).resolve().parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+_setup_paths()
 
 # ── load .env ────────────────────────────────────────────────────────────────
 from dotenv import load_dotenv
@@ -54,7 +66,7 @@ SAMPLE_QUERIES: list[str] = [
     "a person standing in front of a whiteboard explaining a diagram",
     "cảnh đường phố ban đêm có đèn neon",
     "someone holding a microphone on stage",
-    "Có chữ 'DANGER' trên biển báo",
+    "Khung hình có chữ 'Quân A.P'",
 ]
 
 
@@ -212,7 +224,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--query", "-q",
         type=str,
-        default=SAMPLE_QUERIES[0],
+        default=SAMPLE_QUERIES[4],
         help="User query to search for (default: first sample query)",
     )
     parser.add_argument(

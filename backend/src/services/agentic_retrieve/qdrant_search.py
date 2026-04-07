@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """
 qdrant_search.py — Qdrant-backed retrieval service for the Agentic Retrieval Branch.
 
-Current collection design assumptions (aligned with qdrant_upsert.py):
+Migrated from: retrieval/agentic_retrieval/services/qdrant_search.py
+Import paths updated for backend package structure.
+
+Collection design (aligned with qdrant_upsert.py):
 - Single collection: keyframes_v1
-- Named vectors in the same collection:
+- Named vectors:
     * keyframe-dense           (SigLIP 1152d)
     * keyframe-caption-dense   (BGE-M3 1024d)
     * keyframe-object-sparse   (BM25 sparse)
@@ -15,8 +16,7 @@ Current collection design assumptions (aligned with qdrant_upsert.py):
     * optional: tags, caption, detailed_caption, object_counts, ocr_text
 
 Embedding behavior:
-- This module no longer loads local embedding models.
-- It calls the Azure Embedding API service for:
+- Calls the Azure Embedding API service for:
     * /embed/visual   (SigLIP text vector)
     * /embed/semantic (BGE-M3 text vector)
     * /embed/sparse   (BM25 sparse vector)
@@ -31,7 +31,6 @@ import httpx
 from qdrant_client import QdrantClient, models
 
 
-# ── logging ───────────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="[QdrantSearch] %(levelname)s: %(message)s")
@@ -61,7 +60,6 @@ DEFAULT_PAYLOAD_FIELDS = [
     "detailed_caption",
     "object_counts",
     "ocr_text",
-    # Keep a few possible title fields here in case the collection has already been patched.
     "title",
     "video_title",
     "youtube_title",
@@ -70,7 +68,6 @@ DEFAULT_PAYLOAD_FIELDS = [
 POSSIBLE_TITLE_FIELDS = ("title", "video_title", "youtube_title")
 
 
-# ── text helpers ──────────────────────────────────────────────────────────────
 def _normalize_text(text: str) -> str:
     return " ".join((text or "").strip().split())
 
@@ -98,7 +95,7 @@ class EmbeddingApiClient:
                 logger.warning("Embedding API returned non-object JSON for %s", path)
                 return None
             return data
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("Embedding API call failed for %s: %s", path, exc)
             return None
 
@@ -138,18 +135,13 @@ class EmbeddingApiClient:
                 indices=[int(i) for i in indices],
                 values=[float(v) for v in values],
             )
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("Failed to parse sparse embedding response: %s", exc)
             return None
 
 
 # ── result helpers ────────────────────────────────────────────────────────────
 def _extract_points(response: Any) -> List[Any]:
-    """
-    Compatible with both:
-    - QueryResponse(points=[...]) from query_points()
-    - plain list[ScoredPoint] from older client methods
-    """
     if response is None:
         return []
     if isinstance(response, list):
@@ -230,9 +222,8 @@ class QdrantSearchService:
         self.payload_fields = self.payload_fields or list(DEFAULT_PAYLOAD_FIELDS)
         self._warned_metadata = False
 
-    # ── public API used by parallel_retrieval_node ──────────────────────────
+    # ── public API ────────────────────────────────────────────────────────
     def search_keyframe(self, query_texts: List[str], top_k: int = 20) -> List[Dict[str, Any]]:
-        """Search against SigLIP visual vectors using text queries."""
         return self._search_dense_many(
             query_texts=query_texts,
             using=VEC_DENSE,
@@ -242,7 +233,6 @@ class QdrantSearchService:
         )
 
     def search_caption(self, query_texts: List[str], top_k: int = 20) -> List[Dict[str, Any]]:
-        """Search against BGE-M3 caption vectors using text queries."""
         return self._search_dense_many(
             query_texts=query_texts,
             using=VEC_CAPTION_DENSE,
@@ -252,7 +242,6 @@ class QdrantSearchService:
         )
 
     def search_object(self, query_texts: List[str], top_k: int = 20) -> List[Dict[str, Any]]:
-        """Search against sparse object vectors."""
         return self._search_sparse_many(
             query_texts=query_texts,
             using=VEC_OBJECT_SPARSE,
@@ -262,7 +251,6 @@ class QdrantSearchService:
         )
 
     def search_ocr(self, query_texts: List[str], top_k: int = 20) -> List[Dict[str, Any]]:
-        """Search against sparse OCR vectors."""
         return self._search_sparse_many(
             query_texts=query_texts,
             using=VEC_OCR_SPARSE,
@@ -272,13 +260,6 @@ class QdrantSearchService:
         )
 
     def search_metadata(self, query_texts: List[str], top_k: int = 20) -> List[Dict[str, Any]]:
-        """
-        Safe current behavior:
-        - if no title-like payload field exists in the collection, return []
-        - if one exists, run a lexical MatchText filter as a lightweight fallback
-
-        This is NOT semantic metadata retrieval. For that, add a dedicated metadata vector.
-        """
         if not self.metadata_enabled:
             return []
 
@@ -286,8 +267,7 @@ class QdrantSearchService:
         if title_field is None:
             if not self._warned_metadata:
                 logger.warning(
-                    "Metadata retrieval is disabled because no title-like payload field was found in collection '%s'. "
-                    "Add title/video_title/youtube_title payload or a dedicated metadata vector.",
+                    "Metadata retrieval disabled — no title-like payload field in '%s'.",
                     self.collection_name,
                 )
                 self._warned_metadata = True
@@ -323,31 +303,22 @@ class QdrantSearchService:
                     frame_idx = payload.get("frame_idx")
                     if video_id is None or frame_idx is None:
                         continue
-                    hits.append(
-                        {
-                            "video_id": str(video_id),
-                            "frame_id": int(frame_idx),
-                            "score": 1.0 / rank,
-                            "source": "metadata",
-                            "raw_payload": payload,
-                        }
-                    )
+                    hits.append({
+                        "video_id": str(video_id),
+                        "frame_id": int(frame_idx),
+                        "score": 1.0 / rank,
+                        "source": "metadata",
+                        "raw_payload": payload,
+                    })
                 batches.append(hits)
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:
                 logger.warning("Metadata lexical retrieval failed for text=%r: %s", text, exc)
 
         return _merge_variant_results(batches, top_k=top_k)
 
-    # ── internal search methods ──────────────────────────────────────────────
-    def _search_dense_many(
-        self,
-        query_texts: List[str],
-        using: str,
-        encoder: Callable[[str], Optional[List[float]]],
-        source: str,
-        top_k: int,
-    ) -> List[Dict[str, Any]]:
-        batches: List[List[Dict[str, Any]]] = []
+    # ── internal ──────────────────────────────────────────────────────────
+    def _search_dense_many(self, query_texts, using, encoder, source, top_k):
+        batches = []
         for text in query_texts:
             vector = encoder(text)
             if vector is None:
@@ -356,15 +327,8 @@ class QdrantSearchService:
             batches.append(hits)
         return _merge_variant_results(batches, top_k=top_k)
 
-    def _search_sparse_many(
-        self,
-        query_texts: List[str],
-        using: str,
-        encoder: Callable[[str], Optional[models.SparseVector]],
-        source: str,
-        top_k: int,
-    ) -> List[Dict[str, Any]]:
-        batches: List[List[Dict[str, Any]]] = []
+    def _search_sparse_many(self, query_texts, using, encoder, source, top_k):
+        batches = []
         for text in query_texts:
             sparse_query = encoder(text)
             if sparse_query is None:
@@ -373,13 +337,7 @@ class QdrantSearchService:
             batches.append(hits)
         return _merge_variant_results(batches, top_k=top_k)
 
-    def _query_points(
-        self,
-        query: Any,
-        using: str,
-        source: str,
-        limit: int,
-    ) -> List[Dict[str, Any]]:
+    def _query_points(self, query, using, source, limit):
         try:
             response = self.client.query_points(
                 collection_name=self.collection_name,
@@ -390,7 +348,6 @@ class QdrantSearchService:
                 with_vectors=False,
             )
         except TypeError:
-            # Some client versions may prefer search/query_vector style.
             response = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=query,
@@ -401,7 +358,7 @@ class QdrantSearchService:
             )
 
         points = _extract_points(response)
-        results: List[Dict[str, Any]] = []
+        results = []
         for point in points:
             item = _payload_to_result(point, source=source)
             if item is not None:
@@ -409,7 +366,6 @@ class QdrantSearchService:
         return results
 
     def _discover_title_field(self) -> Optional[str]:
-        """Inspect a payload-bearing point to detect whether title-like fields exist."""
         try:
             response = self.client.scroll(
                 collection_name=self.collection_name,
@@ -421,10 +377,10 @@ class QdrantSearchService:
             if not points:
                 return None
             payload = getattr(points[0], "payload", None) or {}
-            for field in POSSIBLE_TITLE_FIELDS:
-                value = payload.get(field)
+            for f in POSSIBLE_TITLE_FIELDS:
+                value = payload.get(f)
                 if isinstance(value, str) and value.strip():
-                    return field
-        except Exception as exc:  # pragma: no cover
+                    return f
+        except Exception as exc:
             logger.warning("Failed to inspect metadata title field: %s", exc)
         return None

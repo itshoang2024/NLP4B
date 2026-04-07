@@ -1,18 +1,21 @@
+"""
+rerank node — internal agentic multi-signal reranker.
+
+Migrated from: retrieval/agentic_retrieval/nodes/rerank.py
+This is the INTERNAL rerank within the agentic pipeline.
+Cross-source reranking (agentic vs heuristic) is in controllers/rerank.py.
+"""
+
 from __future__ import annotations
+from typing import Dict, List, Set
 
-from typing import Dict, List, Optional, Set
-
-from state import AgentState
+from ..state import AgentState
 
 
-# ── Expected modality mapping ────────────────────────────────────────────────
-# Maps intent signal keys to the retrieval source that *should* contain
-# supporting evidence if the signal is non-empty.
 _INTENT_TO_EXPECTED_SOURCE: Dict[str, str] = {
     "text_cues": "ocr",
     "objects": "object",
 }
-# actions/scene → any of these sources counts as covered
 _EVENT_SOURCES: Set[str] = {"caption", "keyframe"}
 
 
@@ -22,13 +25,12 @@ def _safe_list(d: dict, key: str) -> list:
 
 
 def _expected_modalities(query_intent: dict) -> Set[str]:
-    """Derive which retrieval sources *must* appear in evidence given the intent."""
     expected: Set[str] = set()
     for intent_key, source in _INTENT_TO_EXPECTED_SOURCE.items():
         if _safe_list(query_intent, intent_key):
             expected.add(source)
     if _safe_list(query_intent, "actions") or _safe_list(query_intent, "scene"):
-        expected.add("caption")  # caption is the strongest event signal
+        expected.add("caption")
     return expected
 
 
@@ -38,29 +40,16 @@ def rerank_frames(
     routing_weights: Dict[str, float],
     *,
     top_n_input: int = 30,
-    # ── tunable coefficients ──────────────────────────────────────────
-    alpha: float = 0.15,   # cross-source agreement weight
-    beta: float = 0.10,    # intent coverage bonus weight
-    gamma: float = 0.08,   # missing modality penalty weight
+    alpha: float = 0.15,
+    beta: float = 0.10,
+    gamma: float = 0.08,
 ) -> List[dict]:
     """
-    Multi-signal reranker (Option A — Tầng 1 + Tầng 2).
-
-    Score breakdown per candidate:
+    Multi-signal reranker:
         rerank_score = fused_score
                      + α · cross_source_agreement
                      + β · intent_coverage_bonus
                      - γ · missing_modality_penalty
-
-    Tầng 1 — Cross-Source Agreement:
-        Replaces the old flat +0.03 * len(evidence) bonus.
-        Each evidence source contributes proportional to its
-        routing weight AND its normalized score for this candidate.
-
-    Tầng 2 — Intent Coverage Bonus / Missing Modality Penalty:
-        Uses query_intent to determine *expected* modalities.
-        Rewards candidates that cover expected modalities;
-        penalizes candidates missing expected modalities.
     """
     shortlist = fused_candidates[:top_n_input]
     expected = _expected_modalities(query_intent)
@@ -73,16 +62,12 @@ def rerank_frames(
         evidence: List[str] = item.get("evidence", [])
         source_scores: Dict[str, float] = item.get("source_scores", {})
 
-        # ── Tầng 1: Cross-Source Agreement ────────────────────────────
-        # Quality-weighted agreement: each evidence source contributes
-        # proportionally to (routing_weight × normalized_score).
         agreement = sum(
             source_scores.get(src, 0.0) * routing_weights.get(src, 0.0)
             for src in evidence
         )
         agreement_bonus = alpha * agreement
 
-        # ── Tầng 2: Intent Coverage ──────────────────────────────────
         evidence_set = set(evidence)
         present = expected & evidence_set
         missing = expected - evidence_set
@@ -90,7 +75,6 @@ def rerank_frames(
         coverage_bonus = beta * (len(present) / n_expected)
         missing_penalty = gamma * (len(missing) / n_expected)
 
-        # ── Final score ──────────────────────────────────────────────
         rerank_score = (
             fused_score
             + agreement_bonus
@@ -101,8 +85,8 @@ def rerank_frames(
         copied = dict(item)
         copied["rerank_score"] = rerank_score
         copied["agent_score"] = rerank_score
+        copied["score"] = rerank_score  # unified score field
 
-        # Signal breakdown for tracing / debugging
         copied["rerank_signals"] = {
             "fused_score": round(fused_score, 5),
             "agreement_bonus": round(agreement_bonus, 5),

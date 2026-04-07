@@ -8,7 +8,7 @@ Prerequisites
      QDRANT_URL=<your-qdrant-cloud-url>
      QDRANT_API_KEY=<your-qdrant-api-key>
      GEMINI_API_KEY=<your-gemini-api-key>
-
+     EMBEDDING_API_BASE_URL=http://<azure-vm-ip>:8000
 Usage
 ─────
     cd retrieval/agentic_retrieval

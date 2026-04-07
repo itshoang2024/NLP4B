@@ -1,26 +1,34 @@
-# 1. Output schema chung
-Nhánh agent nên trả candidate theo format ổn định:
+# Cross-Branch Output Schema Contract
+
+> **Post-refactor note:** This contract was written before the backend refactor. The canonical schema is now defined in `backend/src/schemas.py` (`SearchResultItem` for the API response) and the internal `Candidate` TypedDict. See [backend/README.md](../../backend/README.md) for the full API contract.
+
+## 1. Internal candidate schema (used by both branches)
+
+Each branch (`agentic_retrieve`, `heuristic_retrieve`) must return candidates as `list[dict]` with these keys:
+
 ```json
 {
-    "video_id": str,
-    "frame_id": int,
-    "branch": "agentic",
-    "agent_score": float,
-    "evidence": list[str],
-    "trace": dict
+    "video_id": "str — YouTube video ID",
+    "frame_id": "int — keyframe index",
+    "score": "float — branch-internal score (higher = better)",
+    "branch": "str — 'agentic' or 'heuristic'",
+    "evidence": "list[str] — retrieval sources that matched",
+    "raw_payload": "dict — Qdrant payload (azure_url, caption, etc.)"
 }
 ```
-Nhánh kia cũng nên có schema tương tự, chỉ đổi branch và manual_score.
 
-# 2. Score direction
+Optional keys (agentic only): `agent_score`, `source_scores`, `rerank_signals`, `trace`.
 
-Phải thống nhất:
-- score càng lớn càng tốt
-- score đã normalize hay chưa
-- final merger có dùng score thô hay calibrated score
+## 2. Score direction
 
-# 3. Frame identity
-Phải thống nhất cứng:
-- video_id
-- frame_id
-để merge cuối không lỗi.
+- Score must be **higher = better**
+- Scores are **not** normalized across branches — the cross-source RRF reranker (`backend/src/controllers/rerank.py`) is scale-independent
+- Final API response uses RRF-derived `score`, not raw branch scores
+
+## 3. Frame identity
+
+Both branches must use the same identity key:
+- `video_id` (str) — YouTube video ID
+- `frame_id` (int) — Qdrant point's `frame_idx` payload field
+
+The RRF reranker deduplicates by `(video_id, frame_id)` tuple. Mismatched identity keys will prevent cross-branch agreement detection.

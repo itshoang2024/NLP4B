@@ -1,6 +1,10 @@
 # Agentic Retrieval
 
+> ⚠️ **This module has been migrated to `backend/src/services/agentic_retrieve/`.** This README is kept as reference documentation for understanding the pipeline design. For the active codebase, setup instructions, and API contract, see [backend/README.md](../../backend/README.md).
+
 LangGraph-based multi-branch retrieval pipeline for multimodal video keyframe search. Takes a natural-language query (Vietnamese or English), decomposes it into structured intent, routes to multiple vector search strategies, fuses results, and returns ranked keyframe candidates.
+
+> **Post-migration differences:** In the `backend/` version, query normalization is handled by a shared middleware (not a graph node), `raw_query` was removed from `AgentState`, and the translator is consumed by `backend/src/middlewares/search_middleware.py` instead of `nodes/normalization.py`.
 
 ## Architecture
 
@@ -27,21 +31,22 @@ User query
          │
     ▼
 ┌──────────────────┐
-│ Parallel          │  Query Qdrant across 5 sources simultaneously:
-│ Retrieval         │  keyframe (SigLIP), caption (BGE-M3), object (sparse),
-│                   │  OCR (sparse), metadata (lexical fallback)
+│ Parallel          │  Encode via Azure Embedding API, query Qdrant:
+│ Retrieval         │  keyframe (SigLIP), caption (BGE-M3), object (BM25),
+│                   │  OCR (BM25), metadata (lexical fallback)
 └────────┬─────────┘
          │
     ▼
 ┌──────────────────┐
-│ Candidate         │  RRF (Reciprocal Rank Fusion) merge across sources
-│ Fusion            │  Applies routing_weights to bias fusion scores
+│ Candidate         │  Weighted-sum merge across sources
+│ Fusion            │  Applies routing_weights × normalized_scores
 └────────┬─────────┘
          │
     ▼
 ┌──────────────────┐
-│ Frame             │  Final scoring, deduplication, and truncation
-│ Reranking         │  → agent_topk: List[Candidate]
+│ Frame             │  Multi-signal reranking:
+│ Reranking         │  cross-source agreement + intent coverage
+│                   │  → agent_topk: List[Candidate]
 └──────────────────┘
 ```
 
@@ -60,21 +65,24 @@ retrieval/agentic_retrieval/
 │   ├── intent_extraction.py # LLM-based structured intent extraction
 │   ├── routing.py          # Modality routing weights
 │   ├── retrieval.py        # Parallel multi-source Qdrant retrieval
-│   ├── fusion.py           # RRF candidate fusion
-│   └── rerank.py           # Final frame reranking
+│   ├── fusion.py           # Weighted-sum candidate fusion
+│   └── rerank.py           # Multi-signal frame reranking
 │
 ├── services/               # External service adapters
 │   ├── llm_service.py      # Gemini API client (google-genai SDK)
-│   ├── qdrant_search.py    # Multi-vector Qdrant search + model encoders
+│   ├── qdrant_search.py    # Multi-vector Qdrant search + Azure Embedding API client
 │   ├── translator.py       # Language translation
 │   └── scoring.py          # Score normalization utilities
 │
-├── test/                   # Integration tests
+├── test/                   # Unit & integration tests
 │   ├── test_llm_intent_extraction.py
 │   ├── test_modality_routing.py
-│   └── test_qdrant_search.py
+│   ├── test_qdrant_search.py
+│   └── test_rerank.py      # Multi-signal rerank formula tests
 │
 └── utils/                  # Shared utilities
+    ├── json_utils.py       # JSON extraction from LLM responses
+    └── logging_utils.py    # Logging configuration helpers
 ```
 
 ## State Schema
@@ -90,7 +98,7 @@ class AgentState(TypedDict, total=False):
     routing_weights: Dict[str, float]        # Per-source weights
 
     retrieval_results: Dict[str, List[Candidate]]  # Results per source
-    fused_candidates: List[Candidate]        # After RRF fusion
+    fused_candidates: List[Candidate]        # After weighted-sum fusion
     reranked_candidates: List[Candidate]     # After reranking
     agent_topk: List[Candidate]              # Final output
 
@@ -119,6 +127,7 @@ cp .env.example .env
 | `QDRANT_URL` | Qdrant Cloud cluster endpoint |
 | `QDRANT_API_KEY` | Qdrant Cloud API key |
 | `GEMINI_API_KEY` | Google Gemini API key for intent extraction |
+| `EMBEDDING_API_BASE_URL` | Azure embedding API base URL (e.g. `http://<VM_IP>:8000`) |
 
 ## Running the Demo
 
@@ -160,6 +169,9 @@ python test/test_modality_routing.py
 
 # Test Qdrant search (requires live Qdrant connection)
 python test/test_qdrant_search.py --query "example search"
+
+# Test reranking formula (no external dependencies)
+python -m pytest test/test_rerank.py -v
 ```
 
 ## Services
@@ -175,20 +187,82 @@ python test/test_qdrant_search.py --query "example search"
 ### QdrantSearchService (`services/qdrant_search.py`)
 
 - **Collection:** `keyframes_v1` (see [schema contract](../../docs/contracts/qdrant-collection-schema.md))
-- **Models loaded at init:**
-  - `BAAI/bge-m3` (SentenceTransformer) for caption queries
-  - `google/siglip-so400m-patch14-384` (AutoModel) for visual queries
+- **Embedding backend:**
+  - Calls Azure Embedding API (`EMBEDDING_API_BASE_URL`)
+  - `/embed/semantic` for BGE-M3 caption vectors
+  - `/embed/visual` for SigLIP keyframe vectors
+  - `/embed/sparse` for BM25 object/OCR sparse vectors
 - **Search methods:**
-  - `search_keyframe()` — SigLIP text to image search
-  - `search_caption()` — BGE-M3 semantic text search
-  - `search_object()` — sparse tag matching
-  - `search_ocr()` — sparse OCR text matching
+  - `search_keyframe()` — SigLIP text-to-image search (dense 1152d)
+  - `search_caption()` — BGE-M3 semantic text search (dense 1024d)
+  - `search_object()` — BM25 sparse object tag matching
+  - `search_ocr()` — BM25 sparse OCR text matching
   - `search_metadata()` — lexical title fallback (often returns empty)
+
+### TranslatorService (`services/translator.py`)
+
+- **Language detection:** Vietnamese fast heuristic (diacritics + markers) → `langdetect` fallback
+- **Translation:** Gemini API (`gemini-3.1-flash-lite-preview`) for non-English → English
+- **Retry logic:** up to 2 attempts with 1s sleep; graceful fallback to original text
+- **Consumed by:** `nodes/normalization.py`
+
+## Scoring Formulas
+
+### Candidate Fusion (`nodes/fusion.py`)
+
+Each candidate's fused score is a **weighted sum** across retrieval sources:
+
+```
+fused_score = Σ (routing_weight[source] × normalized_score[source])
+```
+
+- Scores within each source are **min-max normalized** to [0, 1] before fusion.
+- Candidates are merged by `(video_id, frame_id)` — a frame appearing in multiple sources accumulates score from each.
+
+### Frame Reranking (`nodes/rerank.py`)
+
+The reranker applies a multi-signal formula on top of the fused score:
+
+```
+rerank_score = fused_score
+             + α · cross_source_agreement
+             + β · intent_coverage_bonus
+             - γ · missing_modality_penalty
+```
+
+**Tầng 1 — Cross-Source Agreement** (α = 0.15):
+
+```
+agreement = Σ (source_score[src] × routing_weight[src])   for src in evidence
+```
+
+Rewards candidates confirmed by high-weight, high-scoring sources. Unlike a flat per-source bonus, this is quality-weighted.
+
+**Tầng 2 — Intent Coverage** (β = 0.10, γ = 0.08):
+
+Derives **expected modalities** from query intent:
+- `text_cues ≠ []` → expects `ocr` in evidence
+- `objects ≠ []` → expects `object` in evidence
+- `actions` or `scene ≠ []` → expects `caption` in evidence
+
+```
+coverage_bonus  = β × (|present ∩ expected| / |expected|)
+missing_penalty = γ × (|expected − present| / |expected|)
+```
+
+All coefficients (α, β, γ) are exposed as keyword arguments for tuning.
+
+Each candidate carries a `rerank_signals` dict for debugging:
+```python
+{"fused_score", "agreement_bonus", "coverage_bonus", "missing_penalty",
+ "expected_modalities", "present_modalities", "missing_modalities"}
+```
 
 ## What to test after changes
 
 - **State schema changes** (`state.py`): verify all nodes still read/write compatible keys
 - **Node changes**: run the corresponding test in `test/` and the full demo
+- **Rerank changes**: run `python -m pytest test/test_rerank.py -v`
 - **Service changes**: check model alignment with `qdrant_upsert.py` models
 - **LLM prompt changes**: verify `QueryIntentSchema` output still parses correctly
 - **Routing weight changes**: run `test_modality_routing.py` and check edge cases

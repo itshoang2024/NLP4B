@@ -170,7 +170,7 @@ python test/test_qdrant_search.py --query "example search"
 - **SDK:** `google-genai`
 - **Output:** JSON string matching `QueryIntentSchema`
 - **Features:** Structured JSON output, retry with backoff, force-English option
-- **Reads:** `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+- **Reads:** `GEMINI_API_KEY`
 
 ### QdrantSearchService (`services/qdrant_search.py`)
 
@@ -179,7 +179,7 @@ python test/test_qdrant_search.py --query "example search"
   - `BAAI/bge-m3` (SentenceTransformer) for caption queries
   - `google/siglip-so400m-patch14-384` (AutoModel) for visual queries
 - **Search methods:**
-  - `search_keyframe()` — SigLIP text→image search
+  - `search_keyframe()` — SigLIP text to image search
   - `search_caption()` — BGE-M3 semantic text search
   - `search_object()` — sparse tag matching
   - `search_ocr()` — sparse OCR text matching

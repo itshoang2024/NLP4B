@@ -306,6 +306,7 @@ class QdrantSearchService:
 
     def search_ocr(self, query_texts: List[str], top_k: int = 20) -> List[Dict[str, Any]]:
         """Search against sparse OCR vectors."""
+        logger.info("Searching OCR with query_texts=%r", query_texts)
         return self._search_sparse_many(
             query_texts=query_texts,
             using=VEC_OCR_SPARSE,

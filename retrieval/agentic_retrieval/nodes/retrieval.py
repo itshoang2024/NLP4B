@@ -36,6 +36,23 @@ def build_query_texts(query_bundle: dict, query_intent: dict) -> List[str]:
     return texts[:5]
 
 
+def build_ocr_query_texts(query_intent: dict) -> List[str]:
+    """Build OCR-specific query texts using ONLY the text_cues from intent.
+
+    Rationale: BM25 sparse search tokenizes the full query. If the full
+    natural-language sentence (e.g. "Khung hình có chữ 'Quân A.P'") is
+    used, common words like 'khung hình' will match hallucinated OCR text
+    in many keyframes, inflating their scores.
+
+    By restricting to text_cues only (e.g. ["Quân A.P"]), we ensure the
+    BM25 match is precise and only scores frames that actually contain
+    the expected on-screen text.
+    """
+    text_cues = query_intent.get("text_cues", []) or []
+    texts = [cue.strip() for cue in text_cues if isinstance(cue, str) and cue.strip()]
+    return texts[:5]
+
+
 def _adapt_results(raw_results: list[dict], source: str) -> list[dict]:
     adapted = []
     for item in raw_results:
@@ -61,8 +78,9 @@ def parallel_retrieval_node_factory(search_service: QdrantSearchService, top_k_p
             search_service.search_keyframe(query_texts, top_k=top_k_per_source),
             source="keyframe",
         )
+        ocr_query_texts = build_ocr_query_texts(qi)
         ocr_results = _adapt_results(
-            search_service.search_ocr(query_texts, top_k=top_k_per_source),
+            search_service.search_ocr(ocr_query_texts, top_k=top_k_per_source),
             source="ocr",
         )
         object_results = _adapt_results(
@@ -90,6 +108,7 @@ def parallel_retrieval_node_factory(search_service: QdrantSearchService, top_k_p
             "node": "parallel_retrieval",
             "payload": {
                 "query_texts": query_texts,
+                "ocr_query_texts": ocr_query_texts,
                 "counts": {k: len(v) for k, v in state["retrieval_results"].items()},
             },
         })

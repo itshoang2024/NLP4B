@@ -66,7 +66,7 @@ SAMPLE_QUERIES: list[str] = [
     "a person standing in front of a whiteboard explaining a diagram",
     "cảnh đường phố ban đêm có đèn neon",
     "someone holding a microphone on stage",
-    "Có chữ 'DANGER' trên biển báo",
+    "Khung hình có chữ 'Quân A.P'",
 ]
 
 
@@ -224,7 +224,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--query", "-q",
         type=str,
-        default=SAMPLE_QUERIES[0],
+        default=SAMPLE_QUERIES[4],
         help="User query to search for (default: first sample query)",
     )
     parser.add_argument(

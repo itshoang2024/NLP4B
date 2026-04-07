@@ -1,0 +1,13 @@
+[
+    {
+        "video_id": "L04_V088",
+        "frame_id": 320,
+        "score": 0.5,
+        "source": "rrf",
+        "branch": "heuristic",
+        "evidence": [
+            "keyframe-dense",
+            "caption-dense"
+        ]
+    }
+]

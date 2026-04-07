@@ -8,33 +8,27 @@ Current collection design assumptions (aligned with qdrant_upsert.py):
 - Named vectors in the same collection:
     * keyframe-dense           (SigLIP 1152d)
     * keyframe-caption-dense   (BGE-M3 1024d)
-    * keyframe-object-sparse   (hashed sparse TF)
-    * keyframe-ocr-sparse      (hashed sparse TF)
+    * keyframe-object-sparse   (BM25 sparse)
+    * keyframe-ocr-sparse      (BM25 sparse)
 - Core payload fields per point:
     * video_id, frame_idx, azure_url, timestamp_sec, youtube_link
     * optional: tags, caption, detailed_caption, object_counts, ocr_text
 
-Important note on metadata retrieval:
-- The current upsert script does NOT create a metadata/title vector.
-- If title is not stored in payload (e.g. title/video_title/youtube_title),
-  search_metadata() will return [].
-- For real semantic metadata retrieval, add either:
-    (a) a dedicated title dense/sparse vector, or
-    (b) an indexed title payload field + a representative-frame strategy.
-
-Dependencies are expected to be installed from requirements.txt.
+Embedding behavior:
+- This module no longer loads local embedding models.
+- It calls the Azure Embedding API service for:
+    * /embed/visual   (SigLIP text vector)
+    * /embed/semantic (BGE-M3 text vector)
+    * /embed/sparse   (BM25 sparse vector)
 """
 
 import logging
-import math
 import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-import torch
+import httpx
 from qdrant_client import QdrantClient, models
-from sentence_transformers import SentenceTransformer
-from transformers import AutoModel, AutoTokenizer
 
 
 # ── logging ───────────────────────────────────────────────────────────────────
@@ -51,8 +45,10 @@ VEC_CAPTION_DENSE = "keyframe-caption-dense"
 VEC_OBJECT_SPARSE = "keyframe-object-sparse"
 VEC_OCR_SPARSE = "keyframe-ocr-sparse"
 
-SIGLIP_MODEL = "google/siglip-so400m-patch14-384"
-BGE_M3_MODEL = "BAAI/bge-m3"
+DEFAULT_EMBEDDING_API_BASE_URL = "http://localhost:8000"
+EMBED_VISUAL_PATH = "/embed/visual"
+EMBED_SEMANTIC_PATH = "/embed/semantic"
+EMBED_SPARSE_PATH = "/embed/sparse"
 
 DEFAULT_PAYLOAD_FIELDS = [
     "video_id",
@@ -72,130 +68,79 @@ DEFAULT_PAYLOAD_FIELDS = [
 ]
 
 POSSIBLE_TITLE_FIELDS = ("title", "video_title", "youtube_title")
-_BM25_VOCAB_SIZE = 2**16  # 65,536 buckets, collision-tolerant.
 
 
-# ── model singletons ──────────────────────────────────────────────────────────
-_bge_m3_model: Optional[SentenceTransformer] = None
-_siglip_tokenizer: Optional[Any] = None
-_siglip_model: Optional[Any] = None
-_siglip_device: Optional[str] = None
-
-
-# ── text / vector helpers ─────────────────────────────────────────────────────
+# ── text helpers ──────────────────────────────────────────────────────────────
 def _normalize_text(text: str) -> str:
     return " ".join((text or "").strip().split())
 
 
-def _l2_normalize(vec: Sequence[float]) -> List[float]:
-    values = [float(x) for x in vec]
-    norm = math.sqrt(sum(v * v for v in values))
-    if norm <= 1e-12:
-        return values
-    return [v / norm for v in values]
+# ── embedding api client ──────────────────────────────────────────────────────
+class EmbeddingApiClient:
+    def __init__(self, base_url: str, timeout: int = 30) -> None:
+        self.base_url = (base_url or DEFAULT_EMBEDDING_API_BASE_URL).rstrip("/")
+        self.timeout = timeout
 
+    def _post(self, path: str, text: str) -> Optional[Dict[str, Any]]:
+        payload = {"text": _normalize_text(text)}
+        if not payload["text"]:
+            return None
 
-def _tokenize(text: str) -> List[str]:
-    """Simple lowercase whitespace tokenizer for sparse lexical queries."""
-    return _normalize_text(text.lower()).split()
+        try:
+            response = httpx.post(
+                f"{self.base_url}{path}",
+                json=payload,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                logger.warning("Embedding API returned non-object JSON for %s", path)
+                return None
+            return data
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Embedding API call failed for %s: %s", path, exc)
+            return None
 
+    def encode_semantic(self, text: str) -> Optional[List[float]]:
+        data = self._post(EMBED_SEMANTIC_PATH, text)
+        if not data:
+            return None
+        embedding = data.get("embedding")
+        if not isinstance(embedding, list):
+            logger.warning("Invalid semantic embedding response shape")
+            return None
+        return [float(x) for x in embedding]
 
-def get_sparse_tf_vector(text: str) -> Optional[models.SparseVector]:
-    """
-    Build a sparse term-frequency vector compatible with Qdrant SparseVector.
-    Uses a hash-based vocabulary to avoid external BM25/Rust dependencies.
-    """
-    tokens = _tokenize(text)
-    if not tokens:
-        return None
+    def encode_visual(self, text: str) -> Optional[List[float]]:
+        data = self._post(EMBED_VISUAL_PATH, text)
+        if not data:
+            return None
+        embedding = data.get("embedding")
+        if not isinstance(embedding, list):
+            logger.warning("Invalid visual embedding response shape")
+            return None
+        return [float(x) for x in embedding]
 
-    tf: Dict[int, float] = {}
-    for token in tokens:
-        idx = hash(token) % _BM25_VOCAB_SIZE
-        tf[idx] = tf.get(idx, 0.0) + 1.0
+    def encode_sparse(self, text: str) -> Optional[models.SparseVector]:
+        data = self._post(EMBED_SPARSE_PATH, text)
+        if not data:
+            return None
 
-    return models.SparseVector(indices=list(tf.keys()), values=list(tf.values()))
+        indices = data.get("indices")
+        values = data.get("values")
+        if not isinstance(indices, list) or not isinstance(values, list) or len(indices) != len(values):
+            logger.warning("Invalid sparse embedding response shape")
+            return None
 
-
-def get_bge_m3() -> SentenceTransformer:
-    global _bge_m3_model
-    if _bge_m3_model is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info("Loading dense text model: %s on %s", BGE_M3_MODEL, device)
-        _bge_m3_model = SentenceTransformer(BGE_M3_MODEL, device=device)
-    return _bge_m3_model
-
-
-def get_siglip_text_stack() -> Tuple[Any, Any, str]:
-    global _siglip_tokenizer, _siglip_model, _siglip_device
-    if _siglip_tokenizer is None or _siglip_model is None:
-        _siglip_device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info("Loading multimodal text model: %s on %s", SIGLIP_MODEL, _siglip_device)
-        _siglip_tokenizer = AutoTokenizer.from_pretrained(SIGLIP_MODEL)
-        _siglip_model = AutoModel.from_pretrained(SIGLIP_MODEL).to(_siglip_device)
-        _siglip_model.eval()
-    return _siglip_tokenizer, _siglip_model, _siglip_device or "cpu"
-
-
-# ── query encoders ────────────────────────────────────────────────────────────
-def encode_sparse_query(text: str) -> Optional[models.SparseVector]:
-    text = _normalize_text(text)
-    if not text:
-        return None
-
-    try:
-        return get_sparse_tf_vector(text)
-    except Exception as exc:  # pragma: no cover
-        logger.warning("Sparse query encoding failed: %s", exc)
-        return None
-
-
-def encode_bge_m3_query(text: str) -> Optional[List[float]]:
-    text = _normalize_text(text)
-    if not text:
-        return None
-
-    try:
-        vec = get_bge_m3().encode(text, normalize_embeddings=True)
-        if hasattr(vec, "tolist"):
-            vec = vec.tolist()
-        return [float(x) for x in vec]
-    except Exception as exc:  # pragma: no cover
-        logger.warning("BGE-M3 query encoding failed: %s", exc)
-        return None
-
-
-def encode_siglip_text_query(text: str) -> Optional[List[float]]:
-    text = _normalize_text(text)
-    if not text:
-        return None
-
-    try:
-        tokenizer, model, device = get_siglip_text_stack()
-        inputs = tokenizer([text], padding=True, truncation=True, return_tensors="pt")
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            if hasattr(model, "get_text_features"):
-                outputs = model.get_text_features(**inputs)
-            else:  # fallback across transformer versions
-                raw = model(**inputs)
-                if hasattr(raw, "text_embeds") and raw.text_embeds is not None:
-                    outputs = raw.text_embeds
-                elif hasattr(raw, "pooler_output") and raw.pooler_output is not None:
-                    outputs = raw.pooler_output
-                elif hasattr(raw, "last_hidden_state") and raw.last_hidden_state is not None:
-                    outputs = raw.last_hidden_state.mean(dim=1)
-                else:
-                    outputs = raw[0]
-                    if getattr(outputs, "ndim", 0) == 3:
-                        outputs = outputs.mean(dim=1)
-
-        vec = outputs[0].detach().cpu().numpy().flatten().tolist()
-        return _l2_normalize(vec)
-    except Exception as exc:  # pragma: no cover
-        logger.warning("SigLIP text query encoding failed: %s", exc)
-        return None
+        try:
+            return models.SparseVector(
+                indices=[int(i) for i in indices],
+                values=[float(v) for v in values],
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Failed to parse sparse embedding response: %s", exc)
+            return None
 
 
 # ── result helpers ────────────────────────────────────────────────────────────
@@ -257,12 +202,24 @@ class QdrantSearchService:
     prefer_grpc: bool = False
     payload_fields: Optional[List[str]] = None
     metadata_enabled: bool = True
+    embedding_api_base_url: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.url = self.url or os.environ.get("QDRANT_URL")
         self.api_key = self.api_key or os.environ.get("QDRANT_API_KEY")
         if not self.url or not self.api_key:
             raise ValueError("Missing QDRANT_URL or QDRANT_API_KEY.")
+
+        embedding_api_base_url = (
+            self.embedding_api_base_url
+            or os.environ.get("EMBEDDING_API_BASE_URL")
+            or DEFAULT_EMBEDDING_API_BASE_URL
+        )
+
+        self.embedding_client = EmbeddingApiClient(
+            base_url=embedding_api_base_url,
+            timeout=self.timeout,
+        )
 
         self.client = QdrantClient(
             url=self.url,
@@ -279,7 +236,7 @@ class QdrantSearchService:
         return self._search_dense_many(
             query_texts=query_texts,
             using=VEC_DENSE,
-            encoder=encode_siglip_text_query,
+            encoder=self.embedding_client.encode_visual,
             source="keyframe",
             top_k=top_k,
         )
@@ -289,7 +246,7 @@ class QdrantSearchService:
         return self._search_dense_many(
             query_texts=query_texts,
             using=VEC_CAPTION_DENSE,
-            encoder=encode_bge_m3_query,
+            encoder=self.embedding_client.encode_semantic,
             source="caption",
             top_k=top_k,
         )
@@ -299,7 +256,7 @@ class QdrantSearchService:
         return self._search_sparse_many(
             query_texts=query_texts,
             using=VEC_OBJECT_SPARSE,
-            encoder=encode_sparse_query,
+            encoder=self.embedding_client.encode_sparse,
             source="object",
             top_k=top_k,
         )
@@ -309,7 +266,7 @@ class QdrantSearchService:
         return self._search_sparse_many(
             query_texts=query_texts,
             using=VEC_OCR_SPARSE,
-            encoder=encode_sparse_query,
+            encoder=self.embedding_client.encode_sparse,
             source="ocr",
             top_k=top_k,
         )

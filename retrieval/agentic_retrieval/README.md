@@ -119,6 +119,7 @@ cp .env.example .env
 | `QDRANT_URL` | Qdrant Cloud cluster endpoint |
 | `QDRANT_API_KEY` | Qdrant Cloud API key |
 | `GEMINI_API_KEY` | Google Gemini API key for intent extraction |
+| `EMBEDDING_API_BASE_URL` | Azure embedding API base URL (e.g. `http://<VM_IP>:8000`) |
 
 ## Running the Demo
 
@@ -173,9 +174,11 @@ python -m pytest test/test_qdrant_search.py -v
 ### QdrantSearchService (`services/qdrant_search.py`)
 
 - **Collection:** `keyframes_v1` (see [schema contract](../../docs/contracts/qdrant-collection-schema.md))
-- **Models loaded at init:**
-  - `BAAI/bge-m3` (SentenceTransformer) for caption queries
-  - `google/siglip-so400m-patch14-384` (AutoModel) for visual queries
+- **Embedding backend:**
+  - Calls Azure Embedding API (`EMBEDDING_API_BASE_URL`)
+  - `/embed/semantic` for BGE-M3 caption vectors
+  - `/embed/visual` for SigLIP keyframe vectors
+  - `/embed/sparse` for BM25 object/OCR sparse vectors
 - **Search methods:**
   - `search_keyframe()` — SigLIP text→image search
   - `search_caption()` — BGE-M3 semantic text search

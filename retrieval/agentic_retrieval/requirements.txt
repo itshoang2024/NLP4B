@@ -8,18 +8,15 @@ langgraph==1.0.7
 
 # Environment / config
 python-dotenv==1.2.2
+httpx==0.28.1
 pydantic==2.12.5
 pandas==3.0.2
 matplotlib==3.10.8
 
 # Vector store & retrieval
 qdrant-client==1.17.1
-fastembed>=0.3.0          # BM25 sparse encoding; requires Python <=3.12
 
-# Embedding models 
-sentence-transformers>=3.0
-transformers>=4.48
-torch>=2.2
+# Embedding API client 
 
 # LLM providers
 google-genai==1.70.0

@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .env
 *.egg-info/
+tests/
+benchmark_results/

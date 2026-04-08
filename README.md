@@ -41,7 +41,7 @@ NLP4B/
 │   │   ├── controllers/     # Orchestration, cross-source RRF rerank
 │   │   └── services/
 │   │       ├── agentic_retrieve/   # LangGraph intent-aware pipeline
-│   │       └── heuristic_retrieve/ # Dense hybrid RRF (mock — WIP)
+│   │       └── heuristic_retrieve/ # 2-tier Qdrant fallback search + True RRF
 │   └── test/                 # Standalone demo scripts
 │
 ├── retrieval/                # ⚠️ Legacy — migrated to backend/

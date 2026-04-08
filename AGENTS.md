@@ -66,7 +66,7 @@ Important parts:
 - `src/controllers/rerank.py`: Reciprocal Rank Fusion merging logic
 - `src/controllers/response_builder.py`: flattens raw_payload → SearchResultItem
 - `src/services/agentic_retrieve/`: LangGraph pipeline (5 nodes, no normalization node)
-- `src/services/heuristic_retrieve/`: mock stub (WIP — to be implemented)
+- `src/services/heuristic_retrieve/`: 2-tier Qdrant fallback search, True RRF, Count Bonus multiplier
 - `src/services/translator.py`: shared language detection + Gemini translation
 - `src/config.py`: unified env loading
 - `src/schemas.py`: shared Pydantic models + TypedDicts

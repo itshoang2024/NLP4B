@@ -51,11 +51,6 @@ def clean_and_translate_middleware(payload: SearchRequest) -> ProcessedSearchReq
     3. Translate to English (if needed)
     4. Generate safe rewrites
     5. Package into query_bundle
-
-    Usage in route:
-        @router.post("/search")
-        def search(request: ProcessedSearchRequest = Depends(clean_and_translate_middleware)):
-            ...
     """
     raw_query = payload.raw_query
 

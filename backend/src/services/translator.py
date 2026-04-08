@@ -1,19 +1,19 @@
 """
-Translator service — shared by the search middleware.
+Translator service - shared by the search middleware.
 
 Provides:
-- ``detect_language``  — lightweight offline language detection via langdetect.
-- ``translate_to_english`` — Vietnamese → English translation via Gemini API.
+- detect_language - lightweight offline language detection via heuristics + langdetect.
+- translate_to_english - translation via the pluggable LLM provider layer.
 
-Migrated from: retrieval/agentic_retrieval/services/translator.py
+The LLM backend is determined by the ``LLM_BACKEND`` env var
+(see ``src.services.llm.factory``).  Gemini and any OpenAI-compatible
+endpoint (llama.cpp, Ollama, etc.) are supported out of the box.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import time
-from functools import lru_cache
 from typing import Optional
 
 
@@ -72,22 +72,8 @@ def detect_language(text: str) -> str:
     return "en"
 
 
-# ── Gemini-backed translation ────────────────────────────────────────────────
+# ── LLM-backed translation ──────────────────────────────────────────────────
 
-@lru_cache(maxsize=1)
-def _get_genai_client():
-    from google import genai
-
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise EnvironmentError(
-            "Missing Gemini API key. "
-            "Set the GEMINI_API_KEY (preferred) or GOOGLE_API_KEY env var."
-        )
-    return genai.Client(api_key=api_key)
-
-
-_TRANSLATION_MODEL = "gemini-3.1-flash-lite-preview"
 _TRANSLATION_SYSTEM_INSTRUCTION = (
     "You are a precise translation module for a video-retrieval system. "
     "Translate the user's text into natural, fluent English. "
@@ -103,7 +89,6 @@ def translate_to_english(
     text: str,
     lang: str,
     *,
-    model: str = _TRANSLATION_MODEL,
     timeout: int = 30,
 ) -> str:
     """Translate *text* to English if it is not already in English."""
@@ -112,6 +97,11 @@ def translate_to_english(
 
     if lang == "en":
         return text
+
+    # Lazy import to avoid circular dependency at module load time.
+    from src.services.llm import get_llm_provider
+
+    provider = get_llm_provider()
 
     prompt = (
         f"Translate the following {lang.upper()} text to English.\n\n"
@@ -122,43 +112,39 @@ def translate_to_english(
 
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
-            client = _get_genai_client()
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config={
-                    "temperature": 0.0,
-                    "max_output_tokens": 256,
-                    "system_instruction": _TRANSLATION_SYSTEM_INSTRUCTION,
-                },
+            raw = provider.generate(
+                prompt,
+                system_instruction=_TRANSLATION_SYSTEM_INSTRUCTION,
+                temperature=0.0,
+                max_tokens=256,
+                json_mode=False,
             )
 
-            translated = getattr(response, "text", None)
-            if translated and translated.strip():
-                result = translated.strip().strip('"').strip("'")
+            if raw and raw.strip():
+                result = raw.strip().strip('"').strip("'")
                 logger.info(
-                    "Translated [%s→en]: '%s' → '%s'",
-                    lang, text[:60], result[:60],
+                    "Translated [%s→en] via %s: '%s' → '%s'",
+                    lang, provider.model_name, text[:60], result[:60],
                 )
                 return result
 
             logger.warning(
-                "Gemini returned empty translation (attempt %d/%d).",
-                attempt, _MAX_RETRIES,
+                "LLM returned empty translation (attempt %d/%d, provider=%s).",
+                attempt, _MAX_RETRIES, provider.model_name,
             )
         except Exception as exc:
             last_error = exc
             logger.warning(
-                "Translation attempt %d/%d failed: %s",
-                attempt, _MAX_RETRIES, exc,
+                "Translation attempt %d/%d failed (%s): %s",
+                attempt, _MAX_RETRIES, provider.model_name, exc,
             )
 
         if attempt < _MAX_RETRIES:
             time.sleep(_RETRY_SLEEP)
 
     logger.error(
-        "All translation attempts failed (last error: %s). "
+        "All translation attempts failed (provider=%s, last error: %s). "
         "Returning original text as fallback.",
-        last_error,
+        provider.model_name, last_error,
     )
     return text

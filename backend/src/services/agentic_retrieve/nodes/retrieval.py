@@ -11,6 +11,15 @@ from ..state import AgentState
 from ..qdrant_search import QdrantSearchService
 
 
+def _as_list(value) -> List[str]:
+    """Coerce an intent field to a list of strings (LLMs sometimes return a bare string)."""
+    if isinstance(value, list):
+        return [str(x) for x in value if x]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
 def build_query_texts(query_bundle: dict, query_intent: dict) -> List[str]:
     texts = []
 
@@ -27,11 +36,11 @@ def build_query_texts(query_bundle: dict, query_intent: dict) -> List[str]:
         if rw and rw not in texts:
             texts.append(rw)
 
-    objects = query_intent.get("objects", []) or []
-    attributes = query_intent.get("attributes", []) or []
-    actions = query_intent.get("actions", []) or []
-    scene = query_intent.get("scene", []) or []
-    text_cues = query_intent.get("text_cues", []) or []
+    objects = _as_list(query_intent.get("objects"))
+    attributes = _as_list(query_intent.get("attributes"))
+    actions = _as_list(query_intent.get("actions"))
+    scene = _as_list(query_intent.get("scene"))
+    text_cues = _as_list(query_intent.get("text_cues"))
 
     compact_parts = objects + attributes + actions + scene + text_cues
     compact_query = ", ".join(compact_parts).strip(", ")
@@ -43,8 +52,8 @@ def build_query_texts(query_bundle: dict, query_intent: dict) -> List[str]:
 
 def build_ocr_query_texts(query_intent: dict) -> List[str]:
     """Build OCR-specific query texts using ONLY the text_cues from intent."""
-    text_cues = query_intent.get("text_cues", []) or []
-    texts = [cue.strip() for cue in text_cues if isinstance(cue, str) and cue.strip()]
+    text_cues = _as_list(query_intent.get("text_cues"))
+    texts = [cue.strip() for cue in text_cues if cue.strip()]
     return texts[:5]
 
 

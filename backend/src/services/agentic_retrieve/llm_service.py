@@ -1,20 +1,32 @@
 """
-llm_service.py — Gemini-backed LLM service for query intent extraction.
+llm_service.py — LLM service for query intent extraction.
 
-Migrated from: retrieval/agentic_retrieval/services/llm_service.py
-Import paths updated for backend package structure.
+Delegates to the pluggable LLM provider layer (``src.services.llm``).
+The public interface (``invoke(prompt) -> str``) is unchanged so that
+``nodes/intent_extraction.py`` and ``graph.py`` need zero modifications.
+
+Handles:
+ - Structured JSON output via provider's json_mode
+ - Markdown fence stripping for providers that wrap JSON in ```json blocks
+ - Pydantic validation against QueryIntentSchema
+ - One automatic retry on malformed JSON
+ - Safe fallback to empty intent on total failure
 """
 
 from __future__ import annotations
 
 import json
-import os
+import re
 import time
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
-from google import genai
+from pydantic import BaseModel, Field, ValidationError
+
+from src.services.llm import LLMProvider, get_llm_provider
+
+logger = logging.getLogger(__name__)
 
 
 class QueryIntentSchema(BaseModel):
@@ -27,35 +39,65 @@ class QueryIntentSchema(BaseModel):
     query_type: str = Field(default="mixed")
 
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
+
+
+def _strip_markdown_fences(text: str) -> str:
+    """Remove ```json ... ``` wrappers that some models add."""
+    m = _FENCE_RE.search(text)
+    return m.group(1).strip() if m else text.strip()
+
+
+def _try_parse_intent(raw: str) -> Optional[dict]:
+    """Attempt to parse raw text into a validated QueryIntentSchema dict."""
+    cleaned = _strip_markdown_fences(raw)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Last resort: find the first { ... } block
+        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if not m:
+            return None
+        try:
+            data = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+
+    try:
+        validated = QueryIntentSchema.model_validate(data)
+        return validated.model_dump()
+    except ValidationError:
+        # JSON parsed fine but didn't match schema — still return what we got
+        return data
+
+
+# ── LLMService ───────────────────────────────────────────────────────────────
+
 @dataclass
 class LLMService:
     """
-    Minimal Gemini-backed LLM service for query intent extraction.
+    LLM service for structured query intent extraction.
 
-    Notes:
-    - Uses google-genai / Gemini Developer API.
-    - Reads GEMINI_API_KEY first, then GOOGLE_API_KEY as fallback.
-    - Returns a JSON string so existing downstream code can keep using
-      `extract_json_object(raw_response)` without further changes.
+    Delegates to the pluggable provider layer.  Keeps the same
+    ``invoke(prompt) -> str`` interface for downstream compatibility.
     """
 
-    model_name: str = "gemini-3.1-flash-lite-preview"
-    api_key: Optional[str] = None
-    timeout_seconds: int = 60
+    provider: Optional[LLMProvider] = field(default=None, repr=False)
     temperature: float = 0.1
     max_output_tokens: int = 512
     force_english_output: bool = True
     retry_attempts: int = 2
     retry_sleep_seconds: float = 1.5
-    _client: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "Missing Gemini API key. Set GEMINI_API_KEY (preferred) or GOOGLE_API_KEY."
-            )
-        self._client = genai.Client(api_key=api_key)
+        if self.provider is None:
+            self.provider = get_llm_provider()
+
+    @property
+    def model_name(self) -> str:
+        return self.provider.model_name
 
     def _build_system_instruction(self) -> str:
         parts = [
@@ -76,42 +118,57 @@ class LLMService:
 
     def invoke(self, prompt: str) -> str:
         """
-        Execute a Gemini call and return a JSON string matching QueryIntentSchema.
+        Execute an LLM call and return a JSON string matching QueryIntentSchema.
+
+        On malformed JSON the method retries once with a corrective prompt.
+        On total failure it returns a safe empty-intent JSON string.
         """
-        last_error: Optional[Exception] = None
         system_instruction = self._build_system_instruction()
 
         for attempt in range(1, self.retry_attempts + 1):
             try:
-                response = self._client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config={
-                        "temperature": self.temperature,
-                        "max_output_tokens": self.max_output_tokens,
-                        "response_mime_type": "application/json",
-                        "response_schema": QueryIntentSchema,
-                        "system_instruction": system_instruction,
-                    },
+                raw = self.provider.generate(
+                    prompt,
+                    system_instruction=system_instruction,
+                    temperature=self.temperature,
+                    max_tokens=self.max_output_tokens,
+                    json_mode=True,
                 )
 
-                parsed = getattr(response, "parsed", None)
-                if parsed is not None:
-                    if isinstance(parsed, BaseModel):
-                        return parsed.model_dump_json(ensure_ascii=False)
-                    if isinstance(parsed, dict):
-                        return json.dumps(parsed, ensure_ascii=False)
-
-                text = getattr(response, "text", None)
-                if text and text.strip():
-                    return text
-
-                return self._empty_result_json()
-
-            except Exception as exc:
-                last_error = exc
-                if attempt < self.retry_attempts:
-                    time.sleep(self.retry_sleep_seconds)
+                if not raw or not raw.strip():
+                    logger.warning(
+                        "LLM returned empty response (attempt %d/%d).",
+                        attempt, self.retry_attempts,
+                    )
+                    if attempt < self.retry_attempts:
+                        time.sleep(self.retry_sleep_seconds)
                     continue
 
+                parsed = _try_parse_intent(raw)
+                if parsed is not None:
+                    return json.dumps(parsed, ensure_ascii=False)
+
+                # JSON was malformed — retry with corrective prompt
+                logger.warning(
+                    "Malformed JSON from LLM (attempt %d/%d): %.200s",
+                    attempt, self.retry_attempts, raw,
+                )
+                if attempt < self.retry_attempts:
+                    prompt = (
+                        "Your previous response was not valid JSON. "
+                        "Please return ONLY a valid JSON object with these keys: "
+                        "objects, attributes, actions, scene, text_cues, metadata_cues, query_type.\n\n"
+                        f"Original prompt:\n{prompt}"
+                    )
+                    time.sleep(self.retry_sleep_seconds)
+
+            except Exception as exc:
+                logger.warning(
+                    "LLM call failed (attempt %d/%d): %s",
+                    attempt, self.retry_attempts, exc,
+                )
+                if attempt < self.retry_attempts:
+                    time.sleep(self.retry_sleep_seconds)
+
+        logger.error("All LLM attempts exhausted — returning empty intent.")
         return self._empty_result_json()

@@ -334,6 +334,17 @@ def ensure_collection(client: QdrantClient, name: str) -> None:
     existing = [c.name for c in client.get_collections().collections]
 
     if name in existing:
+        # Ensure payload index on 'tags' exists for heuristic filtering
+        try:
+            client.create_payload_index(
+                collection_name=name,
+                field_name="tags",
+                field_schema="keyword",
+            )
+            logger.info(f"Checked/Created payload index on 'tags' for existing collection '{name}'.")
+        except Exception as e:
+            pass # Index likely already exists
+
         info = client.get_collection(name)
         existing_vecs = set(info.config.params.vectors.keys()) if info.config.params.vectors else set()
         existing_sparse = set(info.config.params.sparse_vectors.keys()) if info.config.params.sparse_vectors else set()
@@ -381,6 +392,17 @@ def ensure_collection(client: QdrantClient, name: str) -> None:
             VEC_OCR_SPARSE: SparseVectorParams(index=SparseIndexParams(on_disk=False)),
         },
     )
+    # create payload index
+    try:
+        client.create_payload_index(
+            collection_name=name,
+            field_name="tags",
+            field_schema="keyword",
+        )
+        logger.info("Payload index created on 'tags'.")
+    except Exception as e:
+        logger.error(f"Failed to create payload index on 'tags': {e}")
+        
     logger.info(f"Collection created: {SIGLIP_DIM}d + {BGE_M3_DIM}d + 2 sparse.")
 
 

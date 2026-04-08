@@ -123,10 +123,10 @@ def run_demo(
 ) -> List[Dict[str, Any]]:
     """Run a single query through the agentic retrieval pipeline."""
 
-    missing = [var for var in ("QDRANT_URL", "QDRANT_API_KEY", "GEMINI_API_KEY") if not os.getenv(var)]
-    if missing:
-        print(f"[ERROR] Missing environment variables: {', '.join(missing)}")
-        sys.exit(1)
+    # missing = [var for var in ("QDRANT_URL", "QDRANT_API_KEY", "GEMINI_API_KEY") if not os.getenv(var)]
+    # if missing:
+    #     print(f"[ERROR] Missing environment variables: {', '.join(missing)}")
+    #     sys.exit(1)
 
     # ---- build query bundle (replicating middleware) ----
     _print_header(f"QUERY: {query}")

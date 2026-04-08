@@ -48,6 +48,7 @@ def get_azure_blob_base_url() -> str:
 # ── Gemini / LLM ─────────────────────────────────────────────────────────────
 
 def get_gemini_api_key() -> str:
+    """Return Gemini API key — kept for backward compatibility."""
     key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
     key = key.strip()
     if not key:
@@ -55,6 +56,30 @@ def get_gemini_api_key() -> str:
             "Missing Gemini API key. Set GEMINI_API_KEY (preferred) or GOOGLE_API_KEY."
         )
     return key
+
+
+# ── LLM Provider (abstraction layer) ─────────────────────────────────────────
+
+def get_llm_backend() -> str:
+    """Return the active LLM backend name (default: ``gemini``)."""
+    return os.getenv("LLM_BACKEND", "gemini").strip().lower()
+
+
+def get_llm_base_url() -> str:
+    """Return the base URL for OpenAI-compatible LLM servers."""
+    return os.getenv("LLM_BASE_URL", "http://localhost:8080").strip().rstrip("/")
+
+
+def get_llm_api_key() -> str | None:
+    """Return the LLM API key, or None if not set."""
+    val = os.getenv("LLM_API_KEY", "").strip()
+    return val or None
+
+
+def get_llm_model_name() -> str | None:
+    """Return the LLM model name override, or None for provider default."""
+    val = os.getenv("LLM_MODEL_NAME", "").strip()
+    return val or None
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────

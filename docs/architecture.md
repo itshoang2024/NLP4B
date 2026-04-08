@@ -70,12 +70,12 @@ The system has four runtime boundaries:
 │     ▼                                         ▼                     │
 │  ┌──────────────────┐     ┌────────────────────────┐               │
 │  │ Agentic Retrieve │     │ Heuristic Retrieve     │               │
-│  │ (LangGraph)      │     │ (⚠ MOCK — WIP)        │               │
+│  │ (LangGraph)      │     │ (Production)          │               │
 │  │                  │     │                        │               │
-│  │ Intent Extraction│     │ Dense hybrid RRF with  │               │
-│  │  → Routing       │     │ SigLIP + BGE-M3        │               │
-│  │  → Parallel      │     │ (to be implemented)    │               │
-│  │    Retrieval     │     │                        │               │
+│  │ Intent Extraction│     │ 2-tier Qdrant          │               │
+│  │  → Routing       │     │ fallback search        │               │
+│  │  → Parallel      │     │  → True RRF            │               │
+│  │    Retrieval     │     │  → Count Bonus         │               │
 │  │  → Fusion        │     │                        │               │
 │  │  → Rerank        │     │                        │               │
 │  └────────┬─────────┘     └───────────┬────────────┘               │
@@ -144,7 +144,7 @@ The system has four runtime boundaries:
 | Middleware | `src/middlewares/search_middleware.py` | Clean, detect language, translate, generate rewrites |
 | Controller | `src/controllers/search_controller.py` | Orchestrate both services, RRF rerank, build response |
 | Agentic service | `src/services/agentic_retrieve/` | LangGraph pipeline: intent → routing → retrieval → fusion → rerank |
-| Heuristic service | `src/services/heuristic_retrieve/` | ⚠️ Mock stub — returns dummy data (WIP) |
+| Heuristic service | `src/services/heuristic_retrieve/` | 2-tier fallback search, True RRF, Count Bonus multiplier |
 
 **Agentic graph nodes** (5 nodes, executed sequentially via LangGraph):
 
@@ -216,7 +216,6 @@ Models used in indexing (qdrant_upsert.py) **must match** models hosted in the e
 
 ## Current Limitations
 
-1. **Heuristic retrieval is a mock** — `backend/src/services/heuristic_retrieve/service.py` returns dummy data. A team member is responsible for implementing the real logic.
 2. **No metadata vector** — title/metadata search uses lexical fallback instead of semantic search; the Qdrant collection has no dedicated metadata vector
 3. **No automated CI/CD** — no test runner, lint, or deployment automation
 4. **Colab-first scripts** — several data-processing scripts auto-install dependencies via subprocess, which can cause issues in managed environments

@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -54,6 +55,7 @@ SAMPLE_QUERIES: list[str] = [
     "cảnh đường phố ban đêm có đèn neon",
     "someone holding a microphone on stage",
     "Khung hình có chữ 'Quân A.P'",
+    "Hai người đàn ông ngoài trời trong chương trình thực tế, một người hóa trang chú hề mặc đồ đỏ trắng, mặt trang điểm trắng, người còn lại cầm micro có bông lọc gió đang nói; bối cảnh đường phố với biển báo giao thông. Chữ trên ảnh: 'THỬ THÁCH NHẬP CUỘC', logo 'FOREST STUDIO'."
 ]
 
 
@@ -123,11 +125,6 @@ def run_demo(
 ) -> List[Dict[str, Any]]:
     """Run a single query through the agentic retrieval pipeline."""
 
-    missing = [var for var in ("QDRANT_URL", "QDRANT_API_KEY", "GEMINI_API_KEY") if not os.getenv(var)]
-    if missing:
-        print(f"[ERROR] Missing environment variables: {', '.join(missing)}")
-        sys.exit(1)
-
     # ---- build query bundle (replicating middleware) ----
     _print_header(f"QUERY: {query}")
     query_bundle = _build_query_bundle(query)
@@ -144,15 +141,31 @@ def run_demo(
     print(f"  ⏱ Init took {t_init:.2f}s")
 
     t1 = time.perf_counter()
-    results = service.retrieve(query_bundle, top_k=top_k)
+    # retrieve from graph
+    initial_state: Dict[str, Any] = {"query_bundle": query_bundle}
+    try:
+        final_state: Dict[str, Any] = service.graph.invoke(initial_state)
+    except Exception as exc:
+        print(f"Agentic pipeline failed: {exc}")
+        final_state = {}
+        
+    candidates = final_state.get("agent_topk", [])[:top_k]
     t_pipeline = time.perf_counter() - t1
 
     # ---- display ----
-    _print_header(f"AGENT TOP-{top_k}  ({len(results)} results)")
-    if not results:
+    _print_header(f"AGENT TOP-{top_k}  ({len(candidates)} results)")
+    if not candidates:
         print("  (no results)")
-    for idx, item in enumerate(results, start=1):
+    for idx, item in enumerate(candidates, start=1):
         _print_candidate(idx, item, verbose=verbose)
+
+    if verbose:
+        _print_section("TRACE LOGS")
+        trace_logs = final_state.get("trace_logs", [])
+        if trace_logs:
+            print(json.dumps(trace_logs, indent=2, ensure_ascii=False))
+        else:
+            print("  (no trace logs)")
 
     _print_section("TIMING SUMMARY")
     print(f"  Service init : {t_init:.2f}s")
@@ -160,7 +173,7 @@ def run_demo(
     print(f"  Total        : {t_init + t_pipeline:.2f}s")
     print()
 
-    return results
+    return candidates
 
 
 def parse_args() -> argparse.Namespace:

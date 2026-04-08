@@ -374,6 +374,87 @@ async def embed_query(request: EmbedRequest):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 5. BATCH QUERY — Multiple texts → all vectors in one call
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BatchEmbedRequest(BaseModel):
+    texts: List[str] = Field(
+        ..., min_length=1, max_length=10,
+        description="List of texts to embed (max 10).",
+    )
+
+
+class BatchItemResponse(BaseModel):
+    text: str
+    semantic_dense: DenseResponse
+    visual_dense: DenseResponse
+    object_sparse: SparseResponse
+    ocr_sparse: SparseResponse
+
+
+class BatchQueryResponse(BaseModel):
+    items: List[BatchItemResponse]
+    total_latency_ms: float
+
+
+@app.post("/embed/query/batch", response_model=BatchQueryResponse)
+async def embed_query_batch(request: BatchEmbedRequest):
+    """
+    Batch: multiple texts → all 4 vectors per text.
+
+    Unlike /embed/query (which also runs NLP analysis), this endpoint
+    takes pre-processed texts and returns only embeddings. Designed for
+    the agentic retrieval pipeline where NLP analysis is done by the
+    LLM intent-extraction node, and we just need dense/sparse vectors
+    for multiple query variants in one HTTP call.
+
+    Each text gets:
+      - BGE-M3 semantic dense (1024d)
+      - SigLIP visual dense (1152d)
+      - BM25 object sparse
+      - BM25 OCR sparse (same model, separate call — caller decides text)
+    """
+    if bge_m3_model is None or siglip_model is None or bm25_model is None:
+        raise HTTPException(503, "Models not loaded yet")
+
+    t_total = time.time()
+    items: List[BatchItemResponse] = []
+
+    for text in request.texts:
+        text = (text or "").strip()
+        if not text:
+            continue
+
+        # Semantic dense (BGE-M3)
+        t0 = time.time()
+        sem_vec = bge_m3_model.encode(text, normalize_embeddings=True)
+        sem_emb = sem_vec.tolist() if hasattr(sem_vec, "tolist") else list(sem_vec)
+        sem_resp = DenseResponse(
+            embedding=sem_emb, model=BGE_M3_MODEL_ID,
+            dim=len(sem_emb), latency_ms=round((time.time() - t0) * 1000, 2),
+        )
+
+        # Visual dense (SigLIP)
+        vis_resp = _encode_siglip(text)
+
+        # Sparse (BM25) — same text used for both object and OCR
+        sparse_resp = _encode_bm25(text)
+
+        items.append(BatchItemResponse(
+            text=text,
+            semantic_dense=sem_resp,
+            visual_dense=vis_resp,
+            object_sparse=sparse_resp,
+            ocr_sparse=sparse_resp,
+        ))
+
+    return BatchQueryResponse(
+        items=items,
+        total_latency_ms=round((time.time() - t_total) * 1000, 2),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
 

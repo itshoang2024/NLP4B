@@ -1,0 +1,11 @@
+timestamp,strategy,query,lang,llm_backend,llm_model,n_results,total_e2e_s,node_translation_s,node_ag_query_intent_extraction_s,node_ag_modality_routing_s,node_ag_parallel_retrieval_s,node_ag_candidate_fusion_s,node_ag_frame_reranking_s,node_hr_embedding_query_s,node_hr_fallback_search_s,node_hr_rrf_fusion_s,node_hr_count_bonus_s
+2026-04-09T00:54:07,agentic,Khung hình có chữ 'Quân A.P',vi,llama_cpp,azure-vintern,20,11.024574,2.757957,2.188409,7.2e-05,6.068511,0.000204,0.000218,,,,
+2026-04-09T00:54:07,heuristic,Khung hình có chữ 'Quân A.P',vi,llama_cpp,n/a (heuristic),20,3.71288,0.451271,,,,,,1.11831,2.142526,0.000452,0.0003
+2026-04-09T00:54:07,agentic,Tìm video có một diễn giả mặc áo đỏ phát biểu ngoài trời,vi,llama_cpp,azure-vintern,20,9.261103,0.479403,2.73399,9.3e-05,6.040611,0.000219,0.000243,,,,
+2026-04-09T00:54:07,heuristic,Tìm video có một diễn giả mặc áo đỏ phát biểu ngoài trời,vi,llama_cpp,n/a (heuristic),20,3.011735,0.429337,,,,,,1.017559,1.564092,0.00047,0.000251
+2026-04-09T00:54:07,agentic,a person standing in front of a whiteboard explaining a diagram,en,llama_cpp,azure-vintern,20,7.576215,8e-06,2.838489,7e-05,4.731606,0.000286,0.000208,,,,
+2026-04-09T00:54:07,heuristic,a person standing in front of a whiteboard explaining a diagram,en,llama_cpp,n/a (heuristic),20,2.460326,5e-06,,,,,,0.965309,1.494211,0.000466,0.000314
+2026-04-09T00:54:07,agentic,cảnh đường phố ban đêm có đèn neon,vi,llama_cpp,azure-vintern,20,6.386635,0.529926,2.134082,8.6e-05,3.716125,0.000164,0.000221,,,,
+2026-04-09T00:54:07,heuristic,cảnh đường phố ban đêm có đèn neon,vi,llama_cpp,n/a (heuristic),20,3.501775,0.346713,,,,,,1.026114,2.128021,0.000601,0.000303
+2026-04-09T00:54:07,agentic,someone holding a microphone on stage,en,llama_cpp,azure-vintern,20,12.485609,4e-06,2.886934,6.9e-05,9.592813,0.00022,0.000202,,,,
+2026-04-09T00:54:07,heuristic,someone holding a microphone on stage,en,llama_cpp,n/a (heuristic),20,2.627448,4e-06,,,,,,1.135542,1.491165,0.000506,0.000198

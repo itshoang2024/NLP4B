@@ -8,7 +8,7 @@ Unified retrieval API that merges two search branches — **agentic** (intent-aw
 |---|---|
 | **Query preprocessing** | Whitespace normalization, language detection (Vietnamese heuristics + `langdetect`), translation to English via Gemini API, deterministic rewrite generation. Implemented in the search middleware. |
 | **Agentic retrieval** | LangGraph pipeline: intent extraction → modality routing → multi-modal Qdrant search (5 named vectors) → weighted fusion → multi-signal reranking. |
-| **Heuristic retrieval** | Interface + stub. Currently a mock returning dummy data. Real implementation is owned by a separate team member. |
+| **Heuristic retrieval** | Full production implementation. 1 HTTP call to `/embed/query` → 2-tier Qdrant fallback search → True RRF fusion → Count Bonus multiplier. |
 | **Cross-source reranking** | Reciprocal Rank Fusion (RRF, k=60) merging ranked lists from both branches. Frames appearing in both branches receive a natural agreement bonus. |
 | **Response building** | Flattens internal `raw_payload` dicts into a stable `SearchResultItem` schema with `azure_url`, `youtube_link`, `timestamp_sec`, `caption`, `ocr_text`. |
 | **Latency reporting** | Per-phase timing (`agentic_ms`, `heuristic_ms`, `rerank_ms`, `total_ms`) included in every response. |
@@ -45,13 +45,20 @@ backend/
 │   │   └── response_builder.py         # Candidate dicts → SearchResponse
 │   │
 │   └── services/
-│       ├── translator.py               # Shared: language detection + Gemini translation
+│       ├── translator.py               # Shared: language detection + LLM translation
+│       │
+│       ├── llm/                         # Pluggable LLM provider layer
+│       │   ├── __init__.py             # Re-exports LLMProvider, get_llm_provider
+│       │   ├── provider.py             # Abstract base class
+│       │   ├── gemini_provider.py       # Google Gemini (google-genai SDK)
+│       │   ├── openai_compat_provider.py # Any OpenAI-compatible server
+│       │   └── factory.py              # Env-based singleton factory
 │       │
 │       ├── agentic_retrieve/
 │       │   ├── service.py              # AgenticRetrieveService (singleton wrapper)
 │       │   ├── graph.py                # LangGraph: 5 nodes, no normalization
 │       │   ├── state.py                # AgentState TypedDict
-│       │   ├── llm_service.py          # Gemini API client for intent extraction
+│       │   ├── llm_service.py          # LLM-backed intent extraction (uses llm/ provider)
 │       │   ├── qdrant_search.py        # Multi-modal Qdrant search (4 vectors + metadata)
 │       │   ├── scoring.py              # Weight normalization, minmax, dedup
 │       │   ├── nodes/
@@ -65,7 +72,7 @@ backend/
 │       │       └── json_utils.py       # JSON extraction from LLM output
 │       │
 │       └── heuristic_retrieve/
-│           └── service.py              # ⚠️ MOCK — returns dummy candidates
+│           └── service.py              # 2-tier fallback search, True RRF, Count Bonus multiplier
 │
 └── test/
     └── run_agentic_demo.py             # Standalone CLI demo (not a test suite)
@@ -76,7 +83,8 @@ backend/
 | Entry point | What it does |
 |---|---|
 | `api.py` | FastAPI app object. Include `search_router` and a `/health` endpoint. |
-| `test/run_agentic_demo.py` | Standalone CLI to run the agentic pipeline without starting the server. Accepts `--query`, `--top_k`, `--verbose`, `--all-samples`. |
+| `test/run_agentic_demo.py` | Standalone CLI to run the pipeline without starting the server. Accepts `--query`, `--top_k`, `--verbose`, `--all-samples`. |
+| `test/bench_latency.py` | Standalone script to benchmark latency for BOTH `agentic` and `heuristic` strategies. Supports `--runs`, `--backend`, and CSV export. |
 
 ## API contract
 
@@ -134,10 +142,12 @@ Returns `200` immediately. Does not initialize models.
 | Service | Env var | Purpose |
 |---|---|---|
 | **Qdrant Cloud** | `QDRANT_URL`, `QDRANT_API_KEY` | Vector search against `keyframes_v1` collection |
-| **Gemini API** | `GEMINI_API_KEY` | Intent extraction + Vietnamese→English translation |
+| **LLM Provider** | `LLM_BACKEND` | `"gemini"` (default), `"openai_compat"`, or `"llama_cpp"` |
+| **Gemini API** | `GEMINI_API_KEY` | Required when `LLM_BACKEND=gemini` |
+| **Self-hosted LLM** | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL_NAME` | Required when `LLM_BACKEND=openai_compat` or `llama_cpp` |
 | **Azure Embedding API** | `EMBEDDING_API_BASE_URL` | text→vector encoding (SigLIP, BGE-M3, BM25 sparse). Must expose `/embed/visual`, `/embed/semantic`, `/embed/sparse` |
 
-All four env vars are **required**. Copy `.env.example` to `.env` and fill in values.
+`QDRANT_URL`, `QDRANT_API_KEY`, `EMBEDDING_API_BASE_URL` are always required. LLM vars depend on `LLM_BACKEND`. Copy `.env.example` to `.env` and fill in values.
 
 ## Qdrant collection contract
 
@@ -170,10 +180,11 @@ pip install -r requirements.txt
 cd backend
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 
-# ── Run (standalone agentic demo) ─────────────────────────
+# ── Run (standalone demo & benchmark) ─────────────────────────
 cd backend
 python test/run_agentic_demo.py --query "người đang nói chuyện" -k 10
 python test/run_agentic_demo.py --all-samples --verbose
+python test/bench_latency.py --strategy both --runs 3    # Measures per-node latency
 
 # ── Quick smoke test (inferred) ──────────────────────────
 curl http://localhost:8000/health
@@ -200,7 +211,7 @@ Client                          Backend
   │              .execute_search()│  │   └─ LangGraph: intent → route → search → fuse → rerank
   │                               │  │
   │                               │  ├─ HeuristicRetrieveService.retrieve(qb, top_k*2)
-  │                               │  │   └─ (MOCK — returns dummy data)
+  │                               │  │   └─ 2-tier search → True RRF → Count Bonus
   │                               │  │
   │                               │  ├─ cross_source_rerank (RRF k=60)
   │                               │  └─ build_response (flatten raw_payload → SearchResultItem)
@@ -225,11 +236,12 @@ The singletons live in `search_controller.py` as module-level globals.
 |---|---|
 | `schemas.py` (response fields) | Frontend `streamlit/app.py` still renders correctly. Check `render_result_card()` field access. |
 | `search_middleware.py` | Translation works for Vietnamese input. English passthrough is unchanged. Rewrites list is non-empty. |
+| `services/llm/*` | Set `LLM_BACKEND=gemini` → verify existing behaviour. Set `LLM_BACKEND=openai_compat` with a running llama.cpp server → verify translation + intent extraction. |
 | `controllers/rerank.py` | Same (video_id, frame_id) from both branches → `branch: "fused"`. Scores are RRF-based, not raw. |
 | `controllers/response_builder.py` | `azure_url` extracted from `raw_payload`. Missing payload fields → `null`, not crash. |
 | `agentic_retrieve/nodes/*` | Run `test/run_agentic_demo.py` with `--verbose` to trace per-node output. |
 | `agentic_retrieve/qdrant_search.py` | Embedding API calls succeed. All 5 search functions return results. |
-| `heuristic_retrieve/service.py` | When replacing the mock: return dicts must include `video_id`, `frame_id`, `score`, `branch`, `evidence`, `raw_payload` keys. |
+| `heuristic_retrieve/service.py` | Ensure returned dictionary keys remain: `video_id`, `frame_id`, `score`, `branch`, `evidence`, `raw_payload`. |
 | `config.py` / `.env` | Server starts without `EnvironmentError`. Health endpoint returns expected values. |
 | `requirements.txt` | `pip install -r requirements.txt` completes. Server starts. |
 
@@ -237,8 +249,7 @@ The singletons live in `search_controller.py` as module-level globals.
 
 | Item | Location | Severity |
 |---|---|---|
-| **Heuristic service is a mock** | `services/heuristic_retrieve/service.py` | 🔴 High — produces fake results in production responses. Must be replaced before real usage. |
-| **No automated tests** | `test/` | 🔴 High — `run_agentic_demo.py` is a manual CLI script, not a pytest suite. No unit tests for middleware, controller, or rerank. |
+| **No automated tests** | `test/` | 🔴 High — `run_agentic_demo.py` and `bench_latency.py` are manual CLI scripts, not a pytest suite. No unit tests for middleware, controller, or rerank. |
 | **Singleton via module globals** | `controllers/search_controller.py:24-25` | 🟡 Medium — module-level `_agentic_service` / `_heuristic_service` globals are not thread-safe and not testable. Should migrate to FastAPI `Depends()` + `@lru_cache` or lifespan events. |
 | **No graceful shutdown** | `api.py` | 🟡 Medium — Qdrant client and LLM client connections are never explicitly closed. |
 | **CORS allows all origins** | `api.py:49` | 🟡 Medium — `allow_origins=["*"]` is acceptable for local dev but must be restricted for deployment. |

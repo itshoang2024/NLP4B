@@ -15,16 +15,27 @@ Collection design (aligned with qdrant_upsert.py):
     * video_id, frame_idx, azure_url, timestamp_sec, youtube_link
     * optional: tags, caption, detailed_caption, object_counts, ocr_text
 
-Embedding behavior:
-- Calls the Azure Embedding API service for:
-    * /embed/visual   (SigLIP text vector)
-    * /embed/semantic (BGE-M3 text vector)
-    * /embed/sparse   (BM25 sparse vector)
+Embedding API usage:
+  Two modes of operation:
+
+  A) Inline embedding (LEGACY — kept for backward compat & tests):
+     Each search_*() method calls embed API per query text:
+       - /embed/visual   (SigLIP text vector)
+       - /embed/semantic (BGE-M3 text vector)
+       - /embed/sparse   (BM25 sparse vector)
+     Pros: simple. Cons: N texts × M sources = N*M HTTP calls.
+
+  B) Pre-computed vectors (OPTIMIZED — used by parallel_retrieval_node):
+     1. embed_all_variants(query_texts, ocr_texts) calls /embed/query/batch
+        once per batch → returns PrecomputedEmbeddings for all texts.
+     2. search_*_with_vectors(embeddings, top_k) methods receive
+        pre-computed vectors → only Qdrant queries, no embedding calls.
+     Pros: 12+ HTTP calls → 2 batch calls. Cons: slightly more complex.
 """
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import httpx
@@ -48,6 +59,8 @@ DEFAULT_EMBEDDING_API_BASE_URL = "http://localhost:8000"
 EMBED_VISUAL_PATH = "/embed/visual"
 EMBED_SEMANTIC_PATH = "/embed/semantic"
 EMBED_SPARSE_PATH = "/embed/sparse"
+EMBED_QUERY_PATH = "/embed/query"
+EMBED_QUERY_BATCH_PATH = "/embed/query/batch"
 
 DEFAULT_PAYLOAD_FIELDS = [
     "video_id",
@@ -73,7 +86,27 @@ def _normalize_text(text: str) -> str:
 
 
 # ── embedding api client ──────────────────────────────────────────────────────
+# ── pre-computed embedding container ──────────────────────────────────────────
+@dataclass
+class PrecomputedEmbeddings:
+    """All embedding vectors for a single query text, pre-computed via /embed/query/batch."""
+    text: str
+    semantic_dense: List[float] = field(default_factory=list)   # BGE-M3 1024d
+    visual_dense: List[float] = field(default_factory=list)     # SigLIP 1152d
+    object_sparse: Optional[models.SparseVector] = None
+    ocr_sparse: Optional[models.SparseVector] = None
+
+
+# ── embedding api client ──────────────────────────────────────────────────────
 class EmbeddingApiClient:
+    """HTTP client for the Embedding-as-a-Service API.
+
+    Provides two usage patterns:
+      1. Individual encode_* methods (legacy, used by search_* methods).
+      2. embed_batch() — calls /embed/query/batch for multiple texts,
+         returns PrecomputedEmbeddings. Used by the optimized retrieval node.
+    """
+
     def __init__(self, base_url: str, timeout: int = 30) -> None:
         self.base_url = (base_url or DEFAULT_EMBEDDING_API_BASE_URL).rstrip("/")
         self.timeout = timeout
@@ -99,6 +132,7 @@ class EmbeddingApiClient:
             logger.warning("Embedding API call failed for %s: %s", path, exc)
             return None
 
+    # ── individual encoders (legacy) ──────────────────────────────────
     def encode_semantic(self, text: str) -> Optional[List[float]]:
         data = self._post(EMBED_SEMANTIC_PATH, text)
         if not data:
@@ -138,6 +172,75 @@ class EmbeddingApiClient:
         except Exception as exc:
             logger.warning("Failed to parse sparse embedding response: %s", exc)
             return None
+
+    # ── batch embed (optimized) ───────────────────────────────────────
+    @staticmethod
+    def _parse_sparse(data: Dict[str, Any]) -> Optional[models.SparseVector]:
+        """Parse sparse vector from API response dict."""
+        indices = data.get("indices", [])
+        values = data.get("values", [])
+        if not indices:
+            return None
+        try:
+            return models.SparseVector(
+                indices=[int(i) for i in indices],
+                values=[float(v) for v in values],
+            )
+        except Exception:
+            return None
+
+    def embed_batch(self, texts: List[str]) -> List[PrecomputedEmbeddings]:
+        """Call /embed/query/batch for multiple texts → PrecomputedEmbeddings.
+
+        Falls back to per-text /embed/query if batch endpoint unavailable.
+        """
+        clean = [_normalize_text(t) for t in texts]
+        clean = [t for t in clean if t]
+        if not clean:
+            return []
+
+        # Try batch endpoint first
+        try:
+            resp = httpx.post(
+                f"{self.base_url}{EMBED_QUERY_BATCH_PATH}",
+                json={"texts": clean},
+                timeout=self.timeout * 2,  # batch may take longer
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items", [])
+            results: List[PrecomputedEmbeddings] = []
+            for item in items:
+                results.append(PrecomputedEmbeddings(
+                    text=item.get("text", ""),
+                    semantic_dense=item.get("semantic_dense", {}).get("embedding", []),
+                    visual_dense=item.get("visual_dense", {}).get("embedding", []),
+                    object_sparse=self._parse_sparse(item.get("object_sparse", {})),
+                    ocr_sparse=self._parse_sparse(item.get("ocr_sparse", {})),
+                ))
+            logger.info("embed_batch: %d texts → %d embeddings via batch endpoint", len(clean), len(results))
+            return results
+        except Exception as exc:
+            logger.warning("Batch endpoint failed, falling back to per-text: %s", exc)
+
+        # Fallback: call /embed/query per text
+        results = []
+        for text in clean:
+            try:
+                data = self._post(EMBED_QUERY_PATH, text)
+                if data is None:
+                    continue
+                results.append(PrecomputedEmbeddings(
+                    text=text,
+                    semantic_dense=data.get("semantic_dense", {}).get("embedding", []),
+                    visual_dense=data.get("visual_dense", {}).get("embedding", []),
+                    object_sparse=self._parse_sparse(data.get("object_sparse", {})),
+                    ocr_sparse=self._parse_sparse(data.get("ocr_sparse", {})),
+                ))
+            except Exception as text_exc:
+                logger.warning("embed_query fallback failed for %r: %s", text, text_exc)
+        logger.info("embed_batch fallback: %d texts → %d embeddings", len(clean), len(results))
+        return results
 
 
 # ── result helpers ────────────────────────────────────────────────────────────
@@ -222,7 +325,7 @@ class QdrantSearchService:
         self.payload_fields = self.payload_fields or list(DEFAULT_PAYLOAD_FIELDS)
         self._warned_metadata = False
 
-    # ── public API ────────────────────────────────────────────────────────
+    # ── public API (legacy — embeds inline per text) ───────────────────
     def search_keyframe(self, query_texts: List[str], top_k: int = 20) -> List[Dict[str, Any]]:
         return self._search_dense_many(
             query_texts=query_texts,
@@ -258,6 +361,87 @@ class QdrantSearchService:
             source="ocr",
             top_k=top_k,
         )
+
+    # ── public API (optimized — pre-computed vectors, Qdrant only) ────
+    def embed_all_variants(
+        self,
+        query_texts: List[str],
+        ocr_texts: Optional[List[str]] = None,
+    ) -> Tuple[List[PrecomputedEmbeddings], List[PrecomputedEmbeddings]]:
+        """Pre-embed all query variants + OCR texts via batch endpoint.
+
+        Returns (main_embeddings, ocr_embeddings) where:
+          - main_embeddings: embeddings for general query texts
+            (used for keyframe, caption, object searches)
+          - ocr_embeddings: embeddings for OCR-specific texts
+            (used only for OCR sparse search)
+
+        OCR texts are embedded separately because they typically contain
+        only text_cues from intent extraction, not full query text.
+        """
+        main_embs = self.embedding_client.embed_batch(query_texts) if query_texts else []
+        ocr_embs = self.embedding_client.embed_batch(ocr_texts) if ocr_texts else []
+        return main_embs, ocr_embs
+
+    def search_keyframe_with_vectors(
+        self, embeddings: List[PrecomputedEmbeddings], top_k: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Keyframe search using pre-computed visual_dense vectors (no embed call)."""
+        batches = []
+        for emb in embeddings:
+            if not emb.visual_dense:
+                continue
+            hits = self._query_points(
+                query=emb.visual_dense, using=VEC_DENSE,
+                source="keyframe", limit=top_k,
+            )
+            batches.append(hits)
+        return _merge_variant_results(batches, top_k=top_k)
+
+    def search_caption_with_vectors(
+        self, embeddings: List[PrecomputedEmbeddings], top_k: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Caption search using pre-computed semantic_dense vectors (no embed call)."""
+        batches = []
+        for emb in embeddings:
+            if not emb.semantic_dense:
+                continue
+            hits = self._query_points(
+                query=emb.semantic_dense, using=VEC_CAPTION_DENSE,
+                source="caption", limit=top_k,
+            )
+            batches.append(hits)
+        return _merge_variant_results(batches, top_k=top_k)
+
+    def search_object_with_vectors(
+        self, embeddings: List[PrecomputedEmbeddings], top_k: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Object search using pre-computed object_sparse vectors (no embed call)."""
+        batches = []
+        for emb in embeddings:
+            if emb.object_sparse is None or not emb.object_sparse.indices:
+                continue
+            hits = self._query_points(
+                query=emb.object_sparse, using=VEC_OBJECT_SPARSE,
+                source="object", limit=top_k,
+            )
+            batches.append(hits)
+        return _merge_variant_results(batches, top_k=top_k)
+
+    def search_ocr_with_vectors(
+        self, embeddings: List[PrecomputedEmbeddings], top_k: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """OCR search using pre-computed ocr_sparse vectors (no embed call)."""
+        batches = []
+        for emb in embeddings:
+            if emb.ocr_sparse is None or not emb.ocr_sparse.indices:
+                continue
+            hits = self._query_points(
+                query=emb.ocr_sparse, using=VEC_OCR_SPARSE,
+                source="ocr", limit=top_k,
+            )
+            batches.append(hits)
+        return _merge_variant_results(batches, top_k=top_k)
 
     def search_metadata(self, query_texts: List[str], top_k: int = 20) -> List[Dict[str, Any]]:
         if not self.metadata_enabled:

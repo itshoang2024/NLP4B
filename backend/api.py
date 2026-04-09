@@ -1,5 +1,5 @@
 """
-api.py — FastAPI application entry point for LookUp.ai backend.
+api.py - FastAPI application entry point for LookUp.ai backend.
 Run: uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 """
 
@@ -22,7 +22,7 @@ if sys.platform == "win32":
         pass
 
 # ── Load .env before any config access ────────────────────────────────────────
-from src.config import COLLECTION_NAME, DEVICE  # noqa: E402 — triggers dotenv load
+from src.config import COLLECTION_NAME, DEVICE  # noqa: E402 - triggers dotenv load
 from src.schemas import HealthResponse  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
@@ -33,7 +33,7 @@ from src.routes.search_route import router as search_router  # noqa: E402
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="LookUp.ai — Unified Retrieval API",
+    title="LookUp.ai - Unified Retrieval API",
     description=(
         "Combines agentic (intent-aware multimodal) and heuristic "
         "(dense hybrid RRF) retrieval with cross-source reranking."
@@ -52,7 +52,7 @@ app.add_middleware(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 def health_check():
-    """Quick health check. Does NOT load models — stays fast."""
+    """Quick health check. Does NOT load models - stays fast."""
     return HealthResponse(
         status="ok",
         collection=COLLECTION_NAME,

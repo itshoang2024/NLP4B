@@ -71,6 +71,7 @@ SAMPLE_QUERIES: list[str] = [
     "a person standing in front of a whiteboard explaining a diagram",
     "cảnh đường phố ban đêm có đèn neon",
     "someone holding a microphone on stage",
+    "Hai người đàn ông ngoài trời trong chương trình thực tế, một người hóa trang chú hề mặc đồ đỏ trắng, mặt trang điểm trắng, người còn lại cầm micro có bông lọc gió đang nói; bối cảnh đường phố với biển báo giao thông. Chữ trên ảnh: 'THỬ THÁCH NHẬP CUỘC', logo 'FOREST STUDIO'.",
 ]
 
 AGENTIC_NODES = [

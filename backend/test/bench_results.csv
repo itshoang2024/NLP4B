@@ -9,3 +9,19 @@ timestamp,strategy,query,lang,llm_backend,llm_model,n_results,total_e2e_s,node_t
 2026-04-09T00:54:07,heuristic,cảnh đường phố ban đêm có đèn neon,vi,llama_cpp,n/a (heuristic),20,3.501775,0.346713,,,,,,1.026114,2.128021,0.000601,0.000303
 2026-04-09T00:54:07,agentic,someone holding a microphone on stage,en,llama_cpp,azure-vintern,20,12.485609,4e-06,2.886934,6.9e-05,9.592813,0.00022,0.000202,,,,
 2026-04-09T00:54:07,heuristic,someone holding a microphone on stage,en,llama_cpp,n/a (heuristic),20,2.627448,4e-06,,,,,,1.135542,1.491165,0.000506,0.000198
+2026-04-09T13:51:02,agentic,Khung hình có chữ 'Quân A.P',vi,llama_cpp,azure-vintern,20,45.262395,24.367883,18.750623,2.9e-05,2.134889,0.000169,0.000244,,,,
+2026-04-09T13:51:02,heuristic,Khung hình có chữ 'Quân A.P',vi,llama_cpp,n/a (heuristic),20,22.631993,19.854393,,,,,,1.027209,1.749982,0.000233,0.000164
+2026-04-09T14:02:44,agentic,Khung hình có chữ 'Quân A.P',vi,llama_cpp,azure-vintern,20,8.519625,0.93446,2.63045,2.7e-05,4.950336,0.000142,0.000136,,,,
+2026-04-09T14:02:44,heuristic,Khung hình có chữ 'Quân A.P',vi,llama_cpp,n/a (heuristic),20,4.08708,0.902293,,,,,,1.00097,2.183479,0.00018,0.000151
+2026-04-09T14:05:52,agentic,Khung hình có chữ 'Quân A.P',vi,llama_cpp,azure-vintern,20,8.506125,1.029308,2.512,3.8e-05,4.960554,0.000122,0.000174,,,,
+2026-04-09T14:05:52,heuristic,Khung hình có chữ 'Quân A.P',vi,llama_cpp,n/a (heuristic),20,4.046629,0.963231,,,,,,0.954168,2.12892,0.000191,0.000106
+2026-04-09T14:05:52,agentic,Tìm video có một diễn giả mặc áo đỏ phát biểu ngoài trời,vi,llama_cpp,azure-vintern,20,8.395873,0.486244,2.752986,2.7e-05,5.153648,0.000132,0.000119,,,,
+2026-04-09T14:05:52,heuristic,Tìm video có một diễn giả mặc áo đỏ phát biểu ngoài trời,vi,llama_cpp,n/a (heuristic),20,3.223864,0.46729,,,,,,1.10438,1.651775,0.000236,0.000174
+2026-04-09T14:05:52,agentic,a person standing in front of a whiteboard explaining a diagram,en,llama_cpp,azure-vintern,20,7.104351,3e-06,3.257098,4.2e-05,3.843724,0.000185,0.000172,,,,
+2026-04-09T14:05:52,heuristic,a person standing in front of a whiteboard explaining a diagram,en,llama_cpp,n/a (heuristic),20,3.006983,3e-06,,,,,,1.059599,1.947035,0.000213,0.000118
+2026-04-09T14:05:52,agentic,cảnh đường phố ban đêm có đèn neon,vi,llama_cpp,azure-vintern,20,9.581626,0.523942,3.302993,2.6e-05,5.752443,0.000122,0.000116,,,,
+2026-04-09T14:05:52,heuristic,cảnh đường phố ban đêm có đèn neon,vi,llama_cpp,n/a (heuristic),20,3.803527,0.432554,,,,,,1.090498,2.280068,0.000293,0.000104
+2026-04-09T14:05:52,agentic,someone holding a microphone on stage,en,llama_cpp,azure-vintern,20,6.903839,1e-06,2.996394,2.5e-05,3.904698,0.000109,0.000106,,,,
+2026-04-09T14:05:52,heuristic,someone holding a microphone on stage,en,llama_cpp,n/a (heuristic),20,2.637627,1e-06,,,,,,1.060426,1.576952,0.000164,7.7e-05
+2026-04-09T14:05:52,agentic,"Hai người đàn ông ngoài trời trong chương trình thực tế, một người hóa trang chú hề mặc đồ đỏ trắng, mặt trang điểm trắng, người còn lại cầm micro có bông lọc gió đang nói; bối cảnh đường phố với biển báo giao thông. Chữ trên ảnh: 'THỬ THÁCH NHẬP CUỘC', logo 'FOREST STUDIO'.",vi,llama_cpp,azure-vintern,20,28.281571,0.922576,20.457397,2.7e-05,6.898942,0.000223,0.000116,,,,
+2026-04-09T14:05:52,heuristic,"Hai người đàn ông ngoài trời trong chương trình thực tế, một người hóa trang chú hề mặc đồ đỏ trắng, mặt trang điểm trắng, người còn lại cầm micro có bông lọc gió đang nói; bối cảnh đường phố với biển báo giao thông. Chữ trên ảnh: 'THỬ THÁCH NHẬP CUỘC', logo 'FOREST STUDIO'.",vi,llama_cpp,n/a (heuristic),20,2.917666,0.331172,,,,,,1.052784,1.533026,0.000299,0.000373

@@ -56,7 +56,6 @@ def query_intent_extraction_node_factory(llm: LLMService):
             prompt = INTENT_EXTRACTION_PROMPT.format(
                 query_bundle_json=json.dumps(query_bundle, ensure_ascii=False, indent=2)
             )
-            # print('prompttttt:', prompt)
             raw_response = llm.invoke(prompt)
             intent = extract_json_object(raw_response)
         except Exception:

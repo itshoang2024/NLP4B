@@ -49,11 +49,11 @@ def get_azure_blob_base_url() -> str:
 
 def get_gemini_api_key() -> str:
     """Return Gemini API key — kept for backward compatibility."""
-    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+    key = os.getenv("GEMINI_API_KEY")
     key = key.strip()
     if not key:
         raise EnvironmentError(
-            "Missing Gemini API key. Set GEMINI_API_KEY (preferred) or GOOGLE_API_KEY."
+            "Missing Gemini API key. Set GEMINI_API_KEY."
         )
     return key
 
@@ -89,5 +89,5 @@ COLLECTION_NAME: str = "keyframes_v1"
 SIGLIP_DIM: int = 1152
 BGE_M3_DIM: int = 1024
 
-DEFAULT_TOP_K: int = 10
-DEVICE: str = "remote (Azure VM)"
+DEFAULT_TOP_K: int = 20
+DEVICE: str = "remote"

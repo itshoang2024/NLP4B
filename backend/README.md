@@ -6,7 +6,7 @@ Unified retrieval API that merges two search branches — **agentic** (intent-aw
 
 | Concern | Detail |
 |---|---|
-| **Query preprocessing** | Whitespace normalization, language detection (Vietnamese heuristics + `langdetect`), translation to English via Gemini API, deterministic rewrite generation. Implemented in the search middleware. |
+| **Query preprocessing** | Unicode NFC normalization, whitespace collapsing, punctuation stripping, emoji removal, language detection (Vietnamese heuristics + `langdetect`), translation to English via pluggable LLM provider, deterministic rewrite generation (original + translated + keyword-only variant). Implemented in the search middleware. |
 | **Agentic retrieval** | LangGraph pipeline: intent extraction → modality routing → multi-modal Qdrant search (5 named vectors) → weighted fusion → multi-signal reranking. |
 | **Heuristic retrieval** | Full production implementation. 1 HTTP call to `/embed/query` → 2-tier Qdrant fallback search → True RRF fusion → Count Bonus multiplier. |
 | **Cross-source reranking** | Reciprocal Rank Fusion (RRF, k=60) merging ranked lists from both branches. Frames appearing in both branches receive a natural agreement bonus. |
@@ -255,6 +255,6 @@ The singletons live in `search_controller.py` as module-level globals.
 | **CORS allows all origins** | `api.py:49` | 🟡 Medium — `allow_origins=["*"]` is acceptable for local dev but must be restricted for deployment. |
 | **`.gitignore` is empty** | `.gitignore` | 🟡 Medium — should at minimum exclude `.env`, `__pycache__/`, `*.pyc`. |
 | **Duplicate TypedDicts** | `schemas.py` + `agentic_retrieve/state.py` | 🟢 Low — `QueryBundle`, `QueryIntent`, `Candidate`, `TraceLog` are defined in both files. `schemas.py` is canonical; `state.py` copies are for LangGraph internal typing. |
-| **Rewrite generation is simplistic** | `middlewares/search_middleware.py:26-43` | 🟢 Low — `_generate_safe_rewrites` is deterministic dedup only. The code comments suggest future LLM-based rewriting. |
+| **Rewrite generation is rule-based** | `middlewares/search_middleware.py:98-134` | 🟢 Low — `_generate_safe_rewrites` produces up to 3 variants (translated + cleaned + keyword-only). Keyword extraction uses EN+VI stopword lists. Future improvement: LLM-based paraphrase rewrites. |
 | **No request validation beyond Pydantic** | `routes/search_route.py` | 🟢 Low — no rate limiting, auth, or request size limiting. |
 | **`src/` in import path** | All internal imports | 🟢 Low — `from src.xxx` is unconventional for Python packages. Works due to `sys.path.insert` in `api.py`. Functional but fragile for testing from repo root. |

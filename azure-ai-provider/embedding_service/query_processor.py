@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Set, Optional, Tuple
 from functools import lru_cache
-
+    
 logger = logging.getLogger(__name__)
 
 # ── Lazy singletons ──────────────────────────────────────────────────────────

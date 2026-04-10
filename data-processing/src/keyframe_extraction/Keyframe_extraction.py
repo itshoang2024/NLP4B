@@ -41,7 +41,7 @@ def scen_keyframe_extraction(scenes_path, features_path, video_path, save_path, 
         # print(final_index)
         keyframe_index += final_index
     keyframe_index.sort()
-    print("final_index：" + str(keyframe_index))
+    print("final_index:" + str(keyframe_index))
 
     # save keyframe
     save_frames(keyframe_index, video_path, save_path, folder_path)

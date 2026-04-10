@@ -3,7 +3,7 @@ import numpy as np
 
 
 def redundancy(video_path, keyframe_index, threshold):
-    # colour histogram
+    # color histogram
     def color_histogram(img):
         hist = cv2.calcHist([img], [0, 1, 2], None, [8, 8, 8], [0, 255, 0, 255, 0, 255])
         return hist.flatten()
@@ -29,7 +29,7 @@ def redundancy(video_path, keyframe_index, threshold):
         ret, frame = video.read()
 
         if ret:
-            # Calculate the colour histogram
+            # Calculate the color histogram
             hist = color_histogram(frame)
             histograms.append(hist)
 
@@ -39,7 +39,7 @@ def redundancy(video_path, keyframe_index, threshold):
     new_histogram = []
     mid_index = []
 
-    # Filter pure colour frames, low information frames
+    # Filter pure color frames, low information frames
     for i in range(len(histogram)):
         peak_count = np.sum(histogram[i] > 0)
         # print(i, peak_count)

@@ -182,7 +182,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Sample queries:\n" + "\n".join(f"  • {q}" for q in SAMPLE_QUERIES),
     )
-    parser.add_argument("--query", "-q", type=str, default=SAMPLE_QUERIES[4])
+    parser.add_argument("--query", "-q", type=str, default=SAMPLE_QUERIES[5])
     parser.add_argument("--top_k", "-k", type=int, default=20)
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--all-samples", action="store_true")

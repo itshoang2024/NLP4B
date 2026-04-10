@@ -51,6 +51,9 @@ import os
 import pickle
 import sys
 
+# Suppress annoying FFmpeg warnings from OpenCV (must be set before import cv2)
+os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
+
 import cv2
 import numpy as np
 import torch
@@ -267,11 +270,24 @@ def extract_clip_features(
 
         # Read only sampled frames
         sampled_vectors: dict[int, np.ndarray] = {}
+        
+        # Seek once to the first sample frame of the shot
+        first_fid = sample_frame_ids[0]
+        cap.set(cv2.CAP_PROP_POS_FRAMES, first_fid)
+        current_fid = first_fid
+        
         for fid in sample_frame_ids:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, fid)
+            # Fast-forward by grabbing frames without full decoding
+            while current_fid < fid:
+                cap.grab()
+                current_fid += 1
+                
             ret, frame = cap.read()
             if not ret:
                 continue
+            
+            current_fid += 1
+            
             img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             inputs = processor(images=img, return_tensors="pt").to(device)
             with torch.no_grad():

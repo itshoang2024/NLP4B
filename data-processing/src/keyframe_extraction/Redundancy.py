@@ -1,4 +1,5 @@
 import cv2
+import os
 import numpy as np
 
 
@@ -17,24 +18,32 @@ def redundancy(video_path, keyframe_index, threshold):
 
     # List for storing colour histograms
     histograms = []
-    # open the video
-    video = cv2.VideoCapture(video_path)
+    # open the video and suppress FFmpeg stderr warnings (e.g. mmco: unref short failure)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        video = cv2.VideoCapture(video_path)
 
-    # Iterate through the list of frame numbers
-    for frame_index in keyframe_index:
-        # Setting the current frame position
-        video.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        # Iterate through the list of frame numbers
+        for frame_index in keyframe_index:
+            # Setting the current frame position
+            video.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
 
-        # Read current frame
-        ret, frame = video.read()
+            # Read current frame
+            ret, frame = video.read()
 
-        if ret:
-            # Calculate the color histogram
-            hist = color_histogram(frame)
-            histograms.append(hist)
+            if ret:
+                # Calculate the color histogram
+                hist = color_histogram(frame)
+                histograms.append(hist)
 
-    # Releasing the video
-    video.release()
+        # Releasing the video
+        video.release()
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(old_stderr)
     histogram = np.array(histograms)
     new_histogram = []
     mid_index = []

@@ -22,6 +22,8 @@ def kmeans_init(data):
     
     # The original algorithm expected the centers to be exact data points
     centers = []
+    new_labels = np.zeros_like(labels)
+    new_k = 0
     for i in range(k_init):
         cluster_samples = data[labels == i]
         if len(cluster_samples) == 0:
@@ -30,5 +32,7 @@ def kmeans_init(data):
         # Find the actual point closest to the cluster mean
         distances = np.linalg.norm(cluster_samples - cluster_mean, axis=1)
         centers.append(cluster_samples[np.argmin(distances)])
+        new_labels[labels == i] = new_k
+        new_k += 1
     
-    return labels, np.array(centers)
+    return new_labels, np.array(centers)

@@ -51,13 +51,28 @@ import os
 import pickle
 import sys
 
-# Suppress annoying FFmpeg warnings from OpenCV (must be set before import cv2)
-os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
+import contextlib
 
 import cv2
 import numpy as np
 import torch
 from PIL import Image
+
+
+@contextlib.contextmanager
+def suppress_stderr():
+    """Redirect C-level stderr to devnull to silence FFmpeg warnings like
+    'mmco: unref short failure'. Python's contextlib.redirect_stderr only
+    captures Python-level writes; this catches native C fprintf(stderr, ...)."""
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(old_stderr)
 
 # All modules are in the same directory as this script
 _KEYFRAME_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -249,9 +264,10 @@ def extract_clip_features(
     model.eval()
 
     # Count total frames
-    cap = cv2.VideoCapture(video_path)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()
+    with suppress_stderr():
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
     print(f"[LMSKE] Total frames in video: {total_frames}")
 
     features = np.zeros((total_frames, 768), dtype=np.float32)
@@ -273,16 +289,18 @@ def extract_clip_features(
         
         # Seek once to the first sample frame of the shot
         first_fid = sample_frame_ids[0]
-        cap.set(cv2.CAP_PROP_POS_FRAMES, first_fid)
+        with suppress_stderr():
+            cap.set(cv2.CAP_PROP_POS_FRAMES, first_fid)
         current_fid = first_fid
         
         for fid in sample_frame_ids:
             # Fast-forward by grabbing frames without full decoding
-            while current_fid < fid:
-                cap.grab()
-                current_fid += 1
+            with suppress_stderr():
+                while current_fid < fid:
+                    cap.grab()
+                    current_fid += 1
                 
-            ret, frame = cap.read()
+                ret, frame = cap.read()
             if not ret:
                 continue
             

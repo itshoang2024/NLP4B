@@ -431,6 +431,15 @@ def main():
 
     # Output folder for this video (frames + scenes file go here)
     video_out_dir = os.path.join(args.output_dir, video_id)
+    
+    # ── Early Exit: Skip if already fully processed ───────────────────────────
+    import glob
+    if os.path.isdir(video_out_dir):
+        existing_jpgs = glob.glob(os.path.join(video_out_dir, "*.jpg"))
+        if len(existing_jpgs) > 0:
+            print(f"\n[LMSKE] ⏩ Video '{video_id}' already processed ({len(existing_jpgs)} keyframes found). Skipping entirely.")
+            return
+
     os.makedirs(video_out_dir, exist_ok=True)
 
     # Intermediate file paths

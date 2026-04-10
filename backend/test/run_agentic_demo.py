@@ -55,7 +55,8 @@ SAMPLE_QUERIES: list[str] = [
     "cảnh đường phố ban đêm có đèn neon",
     "someone holding a microphone on stage",
     "Khung hình có chữ 'Quân A.P'",
-    "Hai người đàn ông ngoài trời trong chương trình thực tế, một người hóa trang chú hề mặc đồ đỏ trắng, mặt trang điểm trắng, người còn lại cầm micro có bông lọc gió đang nói; bối cảnh đường phố với biển báo giao thông. Chữ trên ảnh: 'THỬ THÁCH NHẬP CUỘC', logo 'FOREST STUDIO'."
+    "Hai người đàn ông ngoài trời trong chương trình thực tế, một người hóa trang chú hề mặc đồ đỏ trắng, mặt trang điểm trắng, người còn lại cầm micro có bông lọc gió đang nói; bối cảnh đường phố với biển báo giao thông. Chữ trên ảnh: 'THỬ THÁCH NHẬP CUỘC', logo 'FOREST STUDIO'.",
+    "Một người đang cầm mic trên sân khấu, phía sau nền có chứ 'LIVE MUSIC FESTIVAL'",
 ]
 
 

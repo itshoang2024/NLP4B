@@ -128,6 +128,7 @@ Produced / consumed by `azure_migrator.py`:
 - Azure container `keyframes`: `{video_id}/{filename.jpg}`
 - Azure container `embeddings`: `{video_id}/{filename}`
 - Azure container `ocr`: `{video_id}/{video_id}_ocr.json`
+- Azure container `object-detection`: `{video_id}/{video_id}_object_detection.json`
 
 ### OCR artifacts
 Produced by `data-processing/src/ocr/` pipeline (CRAFT + PaddleOCR):

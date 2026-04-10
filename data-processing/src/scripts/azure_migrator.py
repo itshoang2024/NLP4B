@@ -147,8 +147,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--objects_container",
         type=str,
-        default="objects",
-        help="Azure container name for objects (default: objects).",
+        default="object-detection",
+        help="Azure container name for objects (default: object-detection).",
     )
     parser.add_argument(
         "--workers",
@@ -218,7 +218,9 @@ def discover_objects(objects_dir: Path, container: str = "objects") -> list[Uplo
             continue
 
         stem = fpath.stem
-        if stem.endswith("_objects"):
+        if stem.endswith("_object_detection"):
+            video_id = stem[: -len("_object_detection")]
+        elif stem.endswith("_objects"):
             video_id = stem[: -len("_objects")]
         elif stem.endswith("_object"):
             video_id = stem[: -len("_object")]

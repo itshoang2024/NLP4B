@@ -219,7 +219,7 @@ Models used in indexing (qdrant_upsert.py) **must match** models hosted in the e
 2. **No metadata vector** — title/metadata search uses lexical fallback instead of semantic search; the Qdrant collection has no dedicated metadata vector
 3. **No automated CI/CD** — no test runner, lint, or deployment automation
 4. **Colab-first scripts** — several data-processing scripts auto-install dependencies via subprocess, which can cause issues in managed environments
-5. **Detection JSON upload gap** — `azure_migrator.py` uploads keyframes, embeddings, and OCR, but detection JSONs are uploaded separately (not via `azure_migrator.py`). `qdrant_upsert.py` reads from an `object-detection` Azure container that must be populated through another mechanism.
+5. **Detection JSON upload gap** — (Resolved) `azure_migrator.py` now supports uploading detection JSONs directly to the `object-detection` container under `{video_id}/` folder layout.
 
 ## Change Impact Map
 

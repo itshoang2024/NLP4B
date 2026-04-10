@@ -75,6 +75,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Generator
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import numpy as np
 from azure.storage.blob import ContainerClient
 from fastembed import SparseTextEmbedding
@@ -307,8 +313,8 @@ def build_ocr_lookup(container: ContainerClient, video_id: str) -> dict[int, str
         data = stream_json(container, blob_name)
         if data:
             for item in data:
-                img_name = item.get("image", "")
-                raw_text = item.get("ocr_text", "")
+                img_name = item.get("image") or item.get("file_name", "")
+                raw_text = item.get("ocr_text") or item.get("ocr_result", "")
                 cleaned = clean_ocr_text(raw_text)
                 
                 if cleaned:    

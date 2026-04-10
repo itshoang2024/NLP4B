@@ -1,31 +1,39 @@
 import os
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import SetPayloadOperation, SetPayload
+import random
 from dotenv import load_dotenv
+from qdrant_client import QdrantClient
 
 load_dotenv(".env")
-
 qdrant_url = os.environ.get('QDRANT_URL')
 qdrant_key = os.environ.get('QDRANT_API_KEY')
 
-print(f"Connecting to Qdrant...")
 client = QdrantClient(url=qdrant_url, api_key=qdrant_key, timeout=30)
 col = "keyframes_v1"
-pid = "0015ef2b-ad46-5c80-92da-9772dc1face7"
 
-res = client.retrieve(collection_name=col, ids=[pid], with_payload=True)
-print("Before keys:", list(res[0].payload.keys()))
+print(f"Connecting to Qdrant at {col}...")
+# Scroll some points to verify
+res, next_page = client.scroll(
+    collection_name=col,
+    limit=100,
+    with_payload=True
+)
 
-payload = {"ocr_text": "chờ đợi..."}
-payload_batch = [SetPayloadOperation(set_payload=SetPayload(payload=payload, points=[pid]))]
+print(f"Scanned {len(res)} points. Let's look for ocr_text (excluding '0015ef2b-ad46-5c80-92da-9772dc1face7'):\n")
 
-try:
-    print("Updating using batch_update_points...")
-    client.batch_update_points(collection_name=col, update_operations=payload_batch)
-    print("Update successful.")
-except Exception as e:
-    print("Update failed:", e)
+found_ocr = 0
+for point in res:
+    if str(point.id) == "0015ef2b-ad46-5c80-92da-9772dc1face7":
+        continue
+        
+    if "ocr_text" in point.payload and point.payload["ocr_text"]:
+        ocr_text = point.payload["ocr_text"]
+        print(f"Point {point.id} (Video: {point.payload.get('video_id')} | Frame: {point.payload.get('frame_idx')}):")
+        print(f"  --> ocr_text: {ocr_text.encode('utf-8')}\n")
+        found_ocr += 1
+        
+    # We just want to print 3 random examples
+    if found_ocr >= 5:
+        break
 
-res = client.retrieve(collection_name=col, ids=[pid], with_payload=True)
-print("After keys:", list(res[0].payload.keys()))
-print("ocr_text is:", res[0].payload.get("ocr_text", "NOT FOUND").encode('utf-8'))
+if found_ocr == 0:
+    print("Could not find any new points with ocr_text in the first 100 points.")

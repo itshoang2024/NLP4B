@@ -63,7 +63,6 @@ info_json/
 downloaded_videos/
 notebook/
 templates/
-scripts/
 output/
 
 # Notebook outputs / misc

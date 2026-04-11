@@ -17,7 +17,7 @@ def _pip(*pkgs):
 try:
     from transformers import AutoProcessor, AutoModelForCausalLM, AutoConfig
 except ImportError:
-    _pip("transformers>=5.0.0", "torch", "torchvision")
+    _pip("transformers<4.40.0", "torch", "torchvision")
 
 try:
     from PIL import Image

@@ -15,7 +15,7 @@ def _pip(*pkgs):
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *pkgs])
 
 try:
-    from transformers import AutoProcessor, AutoModelForImageTextToText, AutoConfig
+    from transformers import AutoProcessor, AutoModelForCausalLM, AutoConfig
 except ImportError:
     _pip("transformers>=5.0.0", "torch", "torchvision")
 
@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 import torch
-from transformers import AutoProcessor, AutoModelForImageTextToText, AutoConfig
+from transformers import AutoProcessor, AutoModelForCausalLM, AutoConfig
 from PIL import Image
 from tqdm import tqdm
 
@@ -97,12 +97,11 @@ def load_model(device: str):
         if not hasattr(config, 'text_config'):
             config.text_config = config
 
-        model = AutoModelForImageTextToText.from_pretrained(
+        model = AutoModelForCausalLM.from_pretrained(
             model_path,
             config=config,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
-            dtype=torch.bfloat16
         ).to(device).eval()
 
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)

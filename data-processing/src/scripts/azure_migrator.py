@@ -13,6 +13,7 @@ Usage (Colab):
     FRAMES_SUBDIR = "keyframes"
     OCR_SUBDIR = "ocr"
     OBJECTS_SUBDIR = "objects"
+    EMBEDDINGS_SUBDIR = "embeddings"
     WORKERS = 10
 
     # 3. Run the migration
@@ -21,9 +22,11 @@ Usage (Colab):
         --up_keyframe \
         --up_ocr \
         --up_object \
+        --up_embedding \
         --frames_subdir $FRAMES_SUBDIR \
         --ocr_subdir $OCR_SUBDIR \
         --objects_subdir $OBJECTS_SUBDIR \
+        --embeddings_subdir $EMBEDDINGS_SUBDIR \
         --workers $WORKERS
 """
 
@@ -115,6 +118,11 @@ def parse_args() -> argparse.Namespace:
         help="Upload object files from base_dir/objects.",
     )
     parser.add_argument(
+        "--up_embedding",
+        action="store_true",
+        help="Upload embedding files from base_dir/embeddings.",
+    )
+    parser.add_argument(
         "--frames_subdir",
         type=str,
         default="keyframes",
@@ -133,6 +141,12 @@ def parse_args() -> argparse.Namespace:
         help="Subdirectory name for objects within base_dir (default: objects).",
     )
     parser.add_argument(
+        "--embeddings_subdir",
+        type=str,
+        default="embeddings",
+        help="Subdirectory name for embeddings within base_dir (default: embeddings).",
+    )
+    parser.add_argument(
         "--keyframes_container",
         type=str,
         default="keyframes",
@@ -149,6 +163,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="object-detection",
         help="Azure container name for objects (default: object-detection).",
+    )
+    parser.add_argument(
+        "--embeddings_container",
+        type=str,
+        default="embeddings",
+        help="Azure container name for embeddings (default: embeddings).",
     )
     parser.add_argument(
         "--workers",
@@ -233,6 +253,41 @@ def discover_objects(objects_dir: Path, container: str = "objects") -> list[Uplo
         tasks.append(UploadTask(local_path=fpath, container=container, blob_path=blob_path))
 
     logger.info(f"Discovered {len(tasks)} object file(s) in {objects_dir}")
+    return tasks
+
+
+def discover_embeddings(embeddings_dir: Path, container: str = "embeddings") -> list[UploadTask]:
+    """
+    Scan <embeddings_dir> for embedding files.
+    Expected layout:
+        embeddings_dir/
+        ├── video_id_A.npy
+        ├── video_id_A_frames.json
+
+    video_id is derived from the filename.
+    Each file is routed to given Azure container at path:
+        {video_id}/{filename}
+    """
+    tasks: list[UploadTask] = []
+    if not embeddings_dir or not embeddings_dir.is_dir():
+        logger.warning(f"Embeddings directory not found, skipping: {embeddings_dir}")
+        return tasks
+
+    valid_suffixes = {".npy", ".json"}
+    for fpath in sorted(embeddings_dir.iterdir()):
+        if not fpath.is_file() or fpath.suffix.lower() not in valid_suffixes:
+            continue
+
+        stem = fpath.stem
+        if stem.endswith("_frames"):
+            video_id = stem[: -len("_frames")]
+        else:
+            video_id = stem
+
+        blob_path = f"{video_id}/{fpath.name}"
+        tasks.append(UploadTask(local_path=fpath, container=container, blob_path=blob_path))
+
+    logger.info(f"Discovered {len(tasks)} embedding file(s) in {embeddings_dir}")
     return tasks
 
 
@@ -356,6 +411,7 @@ def main() -> None:
     if args.up_keyframe: containers_to_create.append(args.keyframes_container)
     if args.up_object: containers_to_create.append(args.objects_container)
     if args.up_ocr: containers_to_create.append(args.ocr_container)
+    if args.up_embedding: containers_to_create.append(args.embeddings_container)
 
     for container_name in containers_to_create:
         try:
@@ -371,6 +427,7 @@ def main() -> None:
     frames_dir = base_dir / args.frames_subdir if args.up_keyframe else None
     ocr_dir = base_dir / args.ocr_subdir if args.up_ocr else None
     objects_dir = base_dir / args.objects_subdir if args.up_object else None
+    embeddings_dir = base_dir / args.embeddings_subdir if args.up_embedding else None
 
     # ── Discover files ───────────────────────────────────────────────────
     logger.info("=" * 60)
@@ -380,6 +437,7 @@ def main() -> None:
     if frames_dir: logger.info(f"Frames dir:     {frames_dir} -> Azure [{args.keyframes_container}]")
     if objects_dir: logger.info(f"Objects dir:    {objects_dir} -> Azure [{args.objects_container}]")
     if ocr_dir: logger.info(f"OCR dir:        {ocr_dir} -> Azure [{args.ocr_container}]")
+    if embeddings_dir: logger.info(f"Embeddings dir: {embeddings_dir} -> Azure [{args.embeddings_container}]")
     logger.info(f"Workers:        {args.workers}")
     logger.info("")
 
@@ -390,6 +448,8 @@ def main() -> None:
         tasks.extend(discover_objects(objects_dir, container=args.objects_container))
     if ocr_dir:
         tasks.extend(discover_ocr(ocr_dir, container=args.ocr_container))
+    if embeddings_dir:
+        tasks.extend(discover_embeddings(embeddings_dir, container=args.embeddings_container))
 
     if not tasks:
         logger.warning("No files discovered (or directories omitted). Nothing to upload.")

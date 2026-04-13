@@ -2,6 +2,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import requests
 import html
+import re
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -53,7 +54,7 @@ SPINNER_HTML = """\
       <path d="M19 16.5c.2-.6 1-.6 1.2 0l.4 1.3c.1.2.3.4.5.5l1.3.4c.6.2.6 1 0 1.2l-1.3.4c-.2.1-.4.3-.5.5l-.4 1.3c-.2.6-1 .6-1.2 0l-.4-1.3c-.1-.2-.3-.4-.5-.5l-1.3-.4c-.6-.2-.6-1 0-1.2l1.3-.4c.2-.1.4-.3.5-.5l.4-1.3z" fill="url(#sparkle-grad)"/>
     </svg>
   </div>
-  <div class="custom-loader-text">Đang tìm kiếm (Agentic + Heuristic)...</div>
+  <div class="custom-loader-text">Đang tìm kiếm</div>
 </div>"""
 
 
@@ -85,16 +86,36 @@ def call_search_api(query: str, top_k: int = DEFAULT_TOP_K) -> dict | None:
 
 # ── Card sub-builders ─────────────────────────────────────────────────────────
 
-def _build_image_html(azure_url: str) -> str:
+def _build_image_html(azure_url: str, youtube_link: str) -> str:
+    embed_url = ""
+    if youtube_link:
+        vid_match = re.search(r"(?:v=|youtu\.be/)([^&?]+)", youtube_link)
+        t_match = re.search(r"[?&]t=(\d+)s?", youtube_link)
+        if vid_match:
+            vid = vid_match.group(1)
+            t = t_match.group(1) if t_match else "0"
+            embed_url = f"https://www.youtube.com/embed/{vid}?start={t}&autoplay=1&mute=1&controls=0&showinfo=0&rel=0&loop=1&playlist={vid}"
+
     if not azure_url:
         return '<div class="card-img-placeholder"><span>No Image</span></div>'
     safe_url = html.escape(azure_url, quote=True)
     fallback = '<div class=&quot;card-img-placeholder&quot;><span>Image load failed</span></div>'
-    return (
+    img_tag = (
         f'<img src="{safe_url}" class="card-img" '
         f"onerror=\"this.style.display='none'; "
         f"this.insertAdjacentHTML('afterend', '{fallback}');\">"
     )
+    
+    if youtube_link and embed_url:
+        safe_yt = html.escape(youtube_link, quote=True)
+        safe_embed = html.escape(embed_url, quote=True)
+        return (
+            f'<a href="{safe_yt}" target="_blank" class="card-img-link" data-embed="{safe_embed}">'
+            f'{img_tag}'
+            f'<div class="yt-embed-container"></div>'
+            f'</a>'
+        )
+    return img_tag
 
 
 def _build_youtube_html(youtube_link: str) -> str:
@@ -131,7 +152,7 @@ def render_result_card(result: dict, idx: int) -> str:
     branch_color = BRANCH_COLORS.get(result.get("branch", ""), DEFAULT_BRANCH_COLOR)
     bar_pct = min(int(score * SCORE_BAR_SCALE), SCORE_BAR_MAX_PCT)
 
-    img_html = _build_image_html(result.get("azure_url") or "")
+    img_html = _build_image_html(result.get("azure_url") or "", result.get("youtube_link") or "")
     yt_html = _build_youtube_html(result.get("youtube_link") or "")
     ocr_html = _build_ocr_html(result.get("ocr_text") or "")
     evidence_html = _build_evidence_html(result.get("evidence") or [])
@@ -181,31 +202,87 @@ def build_cards_iframe(results: list[dict]) -> tuple[str, int]:
     cards = "".join(render_result_card(r, i) for i, r in enumerate(results))
     full_html = (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        f"<style>body {{ margin:0; padding:0; background:transparent; "
+        f"<style>body {{ margin:0; padding:0; background:transparent; overflow:hidden; "
         f"font-family:'Inter','Segoe UI',sans-serif; }} {_APP_CSS}</style>"
-        f"</head><body><div class=\"results-grid\">{cards}</div></body></html>"
+        f"</head><body><div class=\"results-grid\">{cards}</div>"
+        f"<script>\n"
+        f"document.querySelectorAll('.card-img-link').forEach(link => {{\n"
+        f"  let hoverTimer;\n"
+        f"  link.addEventListener('mouseenter', () => {{\n"
+        f"    const embed = link.getAttribute('data-embed');\n"
+        f"    if(!embed) return;\n"
+        f"    hoverTimer = setTimeout(() => {{\n"
+        f"      const container = link.querySelector('.yt-embed-container');\n"
+        f"      if(!container.innerHTML) {{\n"
+        f"        container.innerHTML = `<iframe src=\"${{embed}}\" allow=\"autoplay\" style=\"position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;border:none;\"></iframe>`;\n"
+        f"      }}\n"
+        f"      container.style.opacity = 1;\n"
+        f"    }}, 400);\n"
+        f"  }});\n"
+        f"  link.addEventListener('mouseleave', () => {{\n"
+        f"    clearTimeout(hoverTimer);\n"
+        f"    const container = link.querySelector('.yt-embed-container');\n"
+        f"    if(container) {{\n"
+        f"      container.style.opacity = 0;\n"
+        f"      setTimeout(() => container.innerHTML = '', 300);\n"
+        f"    }}\n"
+        f"  }});\n"
+        f"}});\n"
+        f"</script></body></html>"
     )
     rows = (len(results) + CARDS_PER_ROW - 1) // CARDS_PER_ROW
-    height = max(rows * CARD_HEIGHT_PX, MIN_IFRAME_HEIGHT_PX)
+    gap_px = 20
+    padding_px = 20
+    calculated_height = (rows * CARD_HEIGHT_PX) + max(0, rows - 1) * gap_px + padding_px
+    height = max(calculated_height, MIN_IFRAME_HEIGHT_PX)
     return full_html, height
 
 
 # ── UI: Brand logo ────────────────────────────────────────────────────────────
-st.markdown('<div class="brand-logo">LookUp.ai</div>', unsafe_allow_html=True)
+st.markdown('<a href="/" target="_self" class="brand-logo" title="Về trang chủ">LookUp.ai</a>', unsafe_allow_html=True)
 
 # ── UI: Idle hero (shown only when no results) ────────────────────────────────
+hero_placeholder = st.empty()
+
 if "results_data" not in st.session_state:
-    st.markdown("""\
+    with hero_placeholder.container():
+        st.markdown("""\
 <div class="hero-center">
   <div class="hero-sparkle">✨</div>
   <h1 class="hero-title">Tìm kiếm bằng ngôn ngữ tự nhiên</h1>
   <p class="hero-sub">Nhập mô tả cảnh quay bạn muốn tìm — hệ thống sẽ truy vấn qua Agentic + Heuristic retrieval</p>
   <div class="chip-row">
-    <span class="chip">🏃 người đang chạy ngoài đường</span>
-    <span class="chip">🍜 cảnh nấu ăn ban ngày</span>
-    <span class="chip">🎤 người đứng nói chuyện trước đám đông</span>
+    <span class="chip" data-query="Người đang chạy ngoài đường">🏃 Người đang chạy ngoài đường</span>
+    <span class="chip" data-query="Cảnh nấu ăn ban ngày">🍜 Cảnh nấu ăn ban ngày</span>
+    <span class="chip" data-query="Người đứng nói chuyện trước đám đông">🎤 Người đứng nói chuyện trước đám đông</span>
   </div>
 </div>""", unsafe_allow_html=True)
+
+    components.html("""
+    <script>
+    // Access the parent Streamlit DOM
+    const parentWindow = window.parent.document;
+    const chips = parentWindow.querySelectorAll('.chip');
+    
+    chips.forEach(chip => {
+        if (chip.hasAttribute('data-hooked')) return;
+        chip.setAttribute('data-hooked', 'true');
+        
+        chip.addEventListener('click', () => {
+            const query = chip.getAttribute('data-query') || chip.innerText;
+            const textarea = parentWindow.querySelector('[data-testid="stChatInput"] textarea');
+            
+            if (textarea) {
+                // Must use native setter to bypass React 16+ event suppression
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                nativeSetter.call(textarea, query);
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                textarea.focus();
+            }
+        });
+    });
+    </script>
+    """, height=0, width=0)
 
 # ── UI: Results section ──────────────────────────────────────────────────────
 if "results_data" in st.session_state:
@@ -213,27 +290,27 @@ if "results_data" in st.session_state:
     query_shown = st.session_state.get("last_query", "")
 
     st.markdown(
-        f'<div class="results-header">'
-        f'<div class="results-query">"{query_shown}"</div>'
-        f'<div class="results-count">{data["total_results"]} kết quả</div>'
-        f'</div>\n{render_latency_badge(data.get("latency_ms", {}))}',
+        f'<div class="results-header-wrapper">'
+        f'  <div class="results-stats-row">'
+        f'    <div class="results-count">{data["total_results"]} kết quả</div>'
+        f'    {render_latency_badge(data.get("latency_ms", {}))}'
+        f'  </div>'
+        f'  <div class="centered-query-container">'
+        f'    <div class="results-query">"{query_shown}"</div>'
+        f'  </div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
     iframe_html, iframe_height = build_cards_iframe(data["results"])
-    components.html(iframe_html, height=iframe_height, scrolling=True)
-
-    col_center = st.columns([3, 1, 3])[1]
-    with col_center:
-        if st.button("🔄 Tìm kiếm mới", use_container_width=True):
-            del st.session_state["results_data"]
-            del st.session_state["last_query"]
-            st.rerun()
+    components.html(iframe_html, height=iframe_height, scrolling=False)
 
 # ── UI: Search input (fixed bottom) ──────────────────────────────────────────
 search_query = st.chat_input("Mô tả cảnh bạn muốn tìm...")
 
 if search_query:
+    hero_placeholder.empty()
+    
     spinner = st.empty()
     spinner.markdown(SPINNER_HTML, unsafe_allow_html=True)
 

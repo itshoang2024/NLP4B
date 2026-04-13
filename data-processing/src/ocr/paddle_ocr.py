@@ -15,9 +15,9 @@ def _pip(*pkgs):
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *pkgs])
 
 try:
-    from transformers import AutoProcessor, AutoModelForCausalLM, AutoConfig
+    from transformers import AutoProcessor, AutoModelForImageTextToText, AutoConfig
 except ImportError:
-    _pip("transformers<4.40.0", "torch", "torchvision")
+    _pip("transformers>=5.0.0", "torch", "torchvision")
 
 try:
     from PIL import Image
@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 
 import torch
+
 from transformers import AutoProcessor, AutoModelForCausalLM, AutoConfig
 from PIL import Image
 from tqdm import tqdm

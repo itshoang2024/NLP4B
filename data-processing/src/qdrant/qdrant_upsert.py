@@ -144,6 +144,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--detections_container", default="object-detection")
     p.add_argument("--ocr_container", default="ocr", help="Azure container housing OCR results")
     p.add_argument("--video_metadata_link", default="", required=False, help="Path to local metadata CSV (optional)")
+    p.add_argument("--timestamp_dir", default="", required=False,
+                   help="Local dir with {video_id}.csv timestamp files (cols: keyframe_id, timestamp as [start,end])")
+    p.add_argument("--skip_existing", action="store_true",
+                   help="Skip points that already exist in Qdrant (avoid duplicates).")
+    p.add_argument("--siglip_only", action="store_true",
+                   help="Only upload SigLIP embeddings and basic metadata, ignore OCR and objects.")
     return p.parse_args()
 
 
@@ -167,6 +173,89 @@ def load_metadata_csv(csv_path: str) -> dict[str, dict]:
                 }
     logger.info(f"Loaded metadata for {len(meta_dict)} videos.")
     return meta_dict
+
+
+def load_timestamp_csv(timestamp_dir: str, video_id: str) -> dict[int, tuple[float, float]]:
+    """Load timestamp CSV for a video. Returns {frame_idx: (start_sec, end_sec)}.
+
+    Expected CSV format (tab or comma separated):
+        keyframe_id    timestamp
+        112            [0.0, 6.7]
+        150            [6.7, 12.3]
+    """
+    if not timestamp_dir:
+        return {}
+    csv_path = os.path.join(timestamp_dir, f"{video_id}.csv")
+    if not os.path.isfile(csv_path):
+        return {}
+
+    lookup: dict[int, tuple[float, float]] = {}
+    try:
+        df_ts = None
+        # Try reading with common delimiters
+        with open(csv_path, mode="r", encoding="utf-8-sig") as f:
+            first_line = f.readline()
+            delimiter = "\t" if "\t" in first_line else ","
+
+        with open(csv_path, mode="r", encoding="utf-8-sig") as f:
+            reader = csv.reader(f, delimiter=delimiter)
+            header = next(reader, None)
+            if not header:
+                return {}
+
+            for row in reader:
+                if len(row) < 2:
+                    continue
+                try:
+                    frame_idx = int(row[0].strip())
+                except ValueError:
+                    continue
+
+                # Parse timestamp: could be "[0.0, 6.7]" or "0.0, 6.7" or two separate columns
+                ts_raw = ",".join(row[1:]).strip()
+                ts_raw = ts_raw.strip("[]").strip()
+                parts = [p.strip() for p in ts_raw.split(",")]
+                if len(parts) >= 2:
+                    try:
+                        start = float(parts[0])
+                        end = float(parts[1])
+                        lookup[frame_idx] = (start, end)
+                    except ValueError:
+                        continue
+
+        if lookup:
+            logger.info(f"  Timestamp CSV: {len(lookup)} frames loaded from {csv_path}")
+    except Exception as exc:
+        logger.warning(f"  Failed to load timestamp CSV {csv_path}: {exc}")
+
+    return lookup
+
+
+def check_existing_ids(
+    client: QdrantClient, collection: str, video_id: str
+) -> set[str]:
+    """Scroll through Qdrant to find existing point IDs for a given video_id."""
+    existing = set()
+    try:
+        offset = None
+        while True:
+            results, offset = client.scroll(
+                collection_name=collection,
+                scroll_filter={
+                    "must": [{"key": "video_id", "match": {"value": video_id}}]
+                },
+                limit=256,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            for pt in results:
+                existing.add(str(pt.id))
+            if offset is None:
+                break
+    except Exception as exc:
+        logger.warning(f"  Could not check existing IDs for {video_id}: {exc}")
+    return existing
 
 def get_container_client(conn_str: str, container: str) -> ContainerClient:
     return ContainerClient.from_connection_string(conn_str, container)
@@ -209,14 +298,17 @@ def discover_video_ids(container: ContainerClient) -> dict[str, str]:
 def discover_detection_jsons(container: ContainerClient) -> dict[str, str]:
     """Find detection JSON blob paths by scanning detections container."""
     det_map = {}
-    for blob in container.list_blobs():
-        if blob.name.endswith(".json") or blob.name.endswith(".js"):
-            stem = Path(blob.name).stem
-            if stem.endswith("_object_detection"):
-                vid = stem.replace("_object_detection", "")
-            else:
-                vid = stem
-            det_map[vid] = blob.name
+    try:
+        for blob in container.list_blobs():
+            if blob.name.endswith(".json") or blob.name.endswith(".js"):
+                stem = Path(blob.name).stem
+                if stem.endswith("_object_detection"):
+                    vid = stem.replace("_object_detection", "")
+                else:
+                    vid = stem
+                det_map[vid] = blob.name
+    except Exception as e:
+        logger.warning(f"Could not list detections container: {e}")
     return det_map
 
 
@@ -340,16 +432,17 @@ def ensure_collection(client: QdrantClient, name: str) -> None:
     existing = [c.name for c in client.get_collections().collections]
 
     if name in existing:
-        # Ensure payload index on 'tags' exists for heuristic filtering
-        try:
-            client.create_payload_index(
-                collection_name=name,
-                field_name="tags",
-                field_schema="keyword",
-            )
-            logger.info(f"Checked/Created payload index on 'tags' for existing collection '{name}'.")
-        except Exception as e:
-            pass # Index likely already exists
+        # Ensure payload index on 'tags' and 'video_id' exists for heuristic filtering & skipping
+        for field in ["tags", "video_id"]:
+            try:
+                client.create_payload_index(
+                    collection_name=name,
+                    field_name=field,
+                    field_schema="keyword",
+                )
+                logger.info(f"Checked/Created payload index on '{field}' for existing collection '{name}'.")
+            except Exception as e:
+                pass # Index likely already exists
 
         info = client.get_collection(name)
         existing_vecs = set(info.config.params.vectors.keys()) if info.config.params.vectors else set()
@@ -398,16 +491,17 @@ def ensure_collection(client: QdrantClient, name: str) -> None:
             VEC_OCR_SPARSE: SparseVectorParams(index=SparseIndexParams(on_disk=False)),
         },
     )
-    # create payload index
-    try:
-        client.create_payload_index(
-            collection_name=name,
-            field_name="tags",
-            field_schema="keyword",
-        )
-        logger.info("Payload index created on 'tags'.")
-    except Exception as e:
-        logger.error(f"Failed to create payload index on 'tags': {e}")
+    # create payload indices
+    for field in ["tags", "video_id"]:
+        try:
+            client.create_payload_index(
+                collection_name=name,
+                field_name=field,
+                field_schema="keyword",
+            )
+            logger.info(f"Payload index created on '{field}'.")
+        except Exception as e:
+            logger.error(f"Failed to create payload index on '{field}': {e}")
         
     logger.info(f"Collection created: {SIGLIP_DIM}d + {BGE_M3_DIM}d + 2 sparse.")
 
@@ -426,12 +520,20 @@ def generate_points(
     ocr_lookup: dict[int, str],
     meta: dict,
     azure_base_url: str,
+    ts_lookup: dict[int, tuple[float, float]] | None = None,
+    existing_ids: set[str] | None = None,
 ) -> Generator[PointStruct, None, None]:
     """
     Yield PointStruct one-by-one. Never holds the full list in memory.
     Yields 4 vectors immediately at upsert time and bundles OCR + YouTube link payloads.
+
+    If existing_ids is provided, points whose deterministic ID is already in the set
+    are silently skipped (--skip_existing behaviour).
+
+    If ts_lookup is provided, timestamp_start and timestamp_end are added to payload.
     """
     n_frames = embeddings.shape[0]
+    skipped = 0
     
     fps = meta.get("fps", 1.0)
     source_url = meta.get("source_url", "")
@@ -439,25 +541,39 @@ def generate_points(
     for idx in range(n_frames):
         # ── Frame index ──────────────────────────────────────────────
         frame_idx = int(frame_indices[idx]) if (frame_indices and idx < len(frame_indices)) else idx
+
+        # ── Skip existing ────────────────────────────────────────────
+        point_id = deterministic_id(video_id, frame_idx)
+        if existing_ids and point_id in existing_ids:
+            skipped += 1
+            continue
+
         frame_filename = f"{video_id}_{frame_idx:05d}.jpg"
         image_id = f"{video_id}_{frame_idx:05d}"
         
         # Calculate Timestamp & YouTube Link
-        timestamp_sec = int(frame_idx / float(fps)) if fps > 0 else 0
-        youtube_link = f"{source_url}&t={timestamp_sec}s" if source_url else ""
+        calculated_sec = int(frame_idx / float(fps)) if fps > 0 else 0
 
-        # ── Dense vector (convert row then free ref) ─────────────────
-        dense_vec = embeddings[idx].tolist()
+        # ── Timestamp start/end from CSV (optional) ──────────────────
+        if ts_lookup and frame_idx in ts_lookup:
+            ts_start, ts_end = ts_lookup[frame_idx]
+            calculated_sec = int(ts_start)  # override with actual start time
+
+        youtube_link = f"{source_url}&t={calculated_sec}s" if source_url else ""
 
         # ── Base payload ─────────────────────────────────────────────
         vectors: dict = {VEC_DENSE: dense_vec}
         payload: dict = {
             "video_id": video_id,
             "frame_idx": frame_idx,
-            "timestamp_sec": timestamp_sec,
             "youtube_link": youtube_link,
             "azure_url": f"{azure_base_url}/{video_id}/{frame_filename}",
         }
+
+        if ts_lookup and frame_idx in ts_lookup:
+            ts_start, ts_end = ts_lookup[frame_idx]
+            payload["timestamp_start"] = ts_start
+            payload["timestamp_end"] = ts_end
 
         # ── Detection metadata (optional) ────────────────────────────
         frame_result = det_lookup.get(image_id) or det_lookup.get(f"{video_id}_{frame_idx}")
@@ -488,10 +604,13 @@ def generate_points(
                 vectors[VEC_OCR_SPARSE] = ocr_sparse
 
         yield PointStruct(
-            id=deterministic_id(video_id, frame_idx),
+            id=point_id,
             vector=vectors,
             payload=payload,
         )
+
+    if skipped:
+        logger.info(f"  Skipped {skipped} already-existing point(s).")
 
 
 # ── 13. Streaming batch upsert (consumes generator in chunks) ────────────────
@@ -540,7 +659,8 @@ def generate_updates(
     ocr_lookup: dict[int, str],
     meta: dict,
     update_payloads: list[str],
-    update_vectors: list[str]
+    update_vectors: list[str],
+    ts_lookup: dict[int, tuple[float, float]] | None = None,
 ) -> Generator[tuple[str, dict, dict], None, None]:
     """Yields (point_id, payload_dict, vectors_dict) for existing points."""
     fps = meta.get("fps", 1.0)
@@ -559,14 +679,21 @@ def generate_updates(
         payload = {}
         vectors = {}
         
-        # 1. Payloads
-        timestamp_sec = int(frame_idx / float(fps)) if fps > 0 else 0
-        youtube_link = f"{source_url}&t={timestamp_sec}s" if source_url else ""
+        # 1. Payloads setup
+        calculated_sec = int(frame_idx / float(fps)) if fps > 0 else 0
+        
+        if ts_lookup and frame_idx in ts_lookup:
+            ts_start, ts_end = ts_lookup[frame_idx]
+            calculated_sec = int(ts_start)  # Use actual start time if available
+            if "timestamp_start" in update_payloads:
+                payload["timestamp_start"] = ts_start
+            if "timestamp_end" in update_payloads:
+                payload["timestamp_end"] = ts_end
+                
+        youtube_link = f"{source_url}&t={calculated_sec}s" if source_url else ""
         
         if "youtube_link" in update_payloads:
             payload["youtube_link"] = youtube_link
-        if "timestamp_sec" in update_payloads:
-            payload["timestamp_sec"] = timestamp_sec
         if "video_id" in update_payloads:
             payload["video_id"] = video_id
         if "frame_idx" in update_payloads:
@@ -652,8 +779,12 @@ def main() -> None:
 
     # ── Connect ──────────────────────────────────────────────────────
     emb_container = get_container_client(conn_str, args.embeddings_container)
-    det_container = get_container_client(conn_str, args.detections_container)
-    ocr_container = get_container_client(conn_str, args.ocr_container)
+    
+    det_container = None
+    ocr_container = None
+    if not args.siglip_only:
+        det_container = get_container_client(conn_str, args.detections_container)
+        ocr_container = get_container_client(conn_str, args.ocr_container)
     
     qdrant = QdrantClient(url=qdrant_url, api_key=qdrant_key)
     ensure_collection(qdrant, args.collection_name)
@@ -666,14 +797,16 @@ def main() -> None:
         logger.error(f"No .npy blobs in container '{args.embeddings_container}'")
         sys.exit(1)
         
-    det_map = discover_detection_jsons(det_container)
+    det_map = discover_detection_jsons(det_container) if det_container else {}
 
     logger.info("=" * 60)
     logger.info("Qdrant V2.1: 4-Vector Azure-Streaming Upsert (RAM-Optimized)")
     logger.info("=" * 60)
+    logger.info(f"SigLIP Only Mode: {args.siglip_only}")
     logger.info(f"Embeddings:  {args.embeddings_container}")
-    logger.info(f"Detections:  {args.detections_container}")
-    logger.info(f"OCR Stream:  {args.ocr_container}")
+    if not args.siglip_only:
+        logger.info(f"Detections:  {args.detections_container}")
+        logger.info(f"OCR Stream:  {args.ocr_container}")
     logger.info(f"Collection:  {args.collection_name}")
     logger.info(f"Batch size:  {args.batch_size}")
     logger.info(f"Videos:      {len(video_map)}")
@@ -698,31 +831,37 @@ def main() -> None:
         frame_indices = stream_json(emb_container, f"{emb_prefix}_frames.json")
 
         # ── Stream detection JSON ────────────────────────────────────
-        det_data = stream_json(det_container, det_blob) if det_blob else None
-        det_lookup = build_det_lookup(det_data)
-        
-        if det_data is not None:
-             del det_data
+        det_lookup = {}
+        if not args.siglip_only and det_blob and det_container:
+            det_data = stream_json(det_container, det_blob)
+            det_lookup = build_det_lookup(det_data)
+            if det_data is not None:
+                del det_data
 
         if det_lookup:
             n_det += 1
             logger.info(f"  Detection: {len(det_lookup)} frames loaded.")
         else:
             n_dense += 1
-            logger.warning(f"  No detection JSON → dense/OCR only")
+            logger.info(f"  No detection JSON → dense/metadata only")
 
         # ── Setup OCR lookup & Meta ──────────────────────────────────
-        ocr_lookup = build_ocr_lookup(ocr_container, vid)
-        if ocr_lookup:
-            logger.info(f"  OCR Text: {len(ocr_lookup)} mapped frames parsed via JSON.")
+        ocr_lookup = {}
+        if not args.siglip_only and ocr_container:
+            ocr_lookup = build_ocr_lookup(ocr_container, vid)
+            if ocr_lookup:
+                logger.info(f"  OCR Text: {len(ocr_lookup)} mapped frames parsed via JSON.")
             
         vid_meta = meta_dict.get(vid, {})
+        
+        # ── Load timestamp CSV (if --timestamp_dir) ──────────────────
+        ts_lookup = load_timestamp_csv(args.timestamp_dir, vid)
 
         if args.mode == "update":
             # ── Update Payload/Vector Mode ─────────────────────────────
             try:
                 op_gen = generate_updates(
-                    vid, frame_indices, det_lookup, ocr_lookup, vid_meta, update_payloads, update_vectors
+                    vid, frame_indices, det_lookup, ocr_lookup, vid_meta, update_payloads, update_vectors, ts_lookup
                 )
                 ok, fail = stream_updates(qdrant, args.collection_name, op_gen, args.batch_size)
                 total_ok += ok
@@ -744,10 +883,18 @@ def main() -> None:
         n = embeddings.shape[0]
         logger.info(f"  {n} frames streamed ({embeddings.nbytes / 1e6:.1f} MB)")
 
+        # ── Check existing points (if --skip_existing) ───────────────
+        existing_ids = None
+        if args.skip_existing:
+            existing_ids = check_existing_ids(qdrant, args.collection_name, vid)
+            if existing_ids:
+                logger.info(f"  Found {len(existing_ids)} existing point(s) — will skip.")
+
         # ── Stream-upsert via generator ──────────────────────────────
         try:
             point_gen = generate_points(
-                vid, embeddings, frame_indices, det_lookup, ocr_lookup, vid_meta, azure_base
+                vid, embeddings, frame_indices, det_lookup, ocr_lookup,
+                vid_meta, azure_base, ts_lookup, existing_ids,
             )
             ok, fail = stream_upsert(qdrant, args.collection_name, point_gen, args.batch_size)
             total_ok += ok

@@ -692,7 +692,7 @@ def generate_updates(
                 
         youtube_link = f"{source_url}&t={calculated_sec}s" if source_url else ""
         
-        if "youtube_link" in update_payloads:
+        if "youtube_link" in update_payloads and youtube_link:
             payload["youtube_link"] = youtube_link
         if "video_id" in update_payloads:
             payload["video_id"] = video_id

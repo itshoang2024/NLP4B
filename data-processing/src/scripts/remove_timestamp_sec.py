@@ -10,7 +10,7 @@ def main():
         qdrant_url = input("Nhập QDRANT_URL của bạn: ")
         qdrant_key = input("Nhập QDRANT_API_KEY của bạn: ")
 
-    client = QdrantClient(url=qdrant_url, api_key=qdrant_key)
+    client = QdrantClient(url=qdrant_url, api_key=qdrant_key, timeout=120.0)
     collection_name = "keyframes_v1"
 
     print(f"Đang tiến hành xoá toàn bộ trường 'timestamp_sec' khỏi collection {collection_name}...")
@@ -20,9 +20,10 @@ def main():
         client.delete_payload(
             collection_name=collection_name,
             keys=["timestamp_sec"],
-            points_selector=Filter()
+            points=Filter(),
+            wait=False
         )
-        print("✅ Xoá thành công trường 'timestamp_sec' khỏi toàn bộ DB!")
+        print("✅ Lệnh Xoá đã được phát đi! (Chạy bất đồng bộ, Qdrant sẽ xử lý ngầm, có thể tốn vài chục giây trên mây)")
     except Exception as e:
         print(f"❌ Xoá thất bại: {e}")
 

@@ -12,7 +12,11 @@ from src.middlewares.search_middleware import (
     clean_and_translate_middleware,
     ProcessedSearchRequest,
 )
-from src.controllers.search_controller import execute_search
+from src.controllers.search_controller import (
+    execute_search,
+    execute_agentic_only_search,
+    execute_heuristic_only_search
+)
 
 
 router = APIRouter()
@@ -38,6 +42,38 @@ def search_endpoint(
         {"query": "...", "total_results": N, "results": [...], "latency_ms": {...}}
     """
     return execute_search(
+        query_bundle=request.query_bundle,
+        top_k=request.top_k,
+    )
+
+
+@router.post("/search/agentic", response_model=SearchResponse)
+def search_agentic_endpoint(
+    request: ProcessedSearchRequest = Depends(clean_and_translate_middleware),
+):
+    """
+    Agentic-only search endpoint.
+    
+    Returns results from the intent-aware multimodal pipeline only,
+    bypassing heuristic retrieval and RRF reranking.
+    """
+    return execute_agentic_only_search(
+        query_bundle=request.query_bundle,
+        top_k=request.top_k,
+    )
+
+
+@router.post("/search/heuristic", response_model=SearchResponse)
+def search_heuristic_endpoint(
+    request: ProcessedSearchRequest = Depends(clean_and_translate_middleware),
+):
+    """
+    Heuristic-only search endpoint.
+    
+    Returns results from the dense hybrid pipeline only,
+    bypassing agentic retrieval and RRF reranking.
+    """
+    return execute_heuristic_only_search(
         query_bundle=request.query_bundle,
         top_k=request.top_k,
     )

@@ -130,3 +130,74 @@ def execute_search(query_bundle: Dict[str, Any], top_k: int = 10) -> SearchRespo
     )
 
     return response
+
+
+def execute_agentic_only_search(query_bundle: Dict[str, Any], top_k: int = 10) -> SearchResponse:
+    """Run only the agentic branch."""
+    t_start = time.perf_counter()
+    
+    agentic_results, agentic_ms = _run_agentic(query_bundle, top_k)
+    
+    total_ms = (time.perf_counter() - t_start) * 1000
+    raw_query = query_bundle.get("raw", query_bundle.get("cleaned", ""))
+    
+    response = build_response(
+        query=raw_query,
+        candidates=agentic_results,
+        latency_ms={
+            "agentic_ms": round(agentic_ms, 2),
+            "heuristic_ms": 0.0, #Don't use
+            "rerank_ms": 0.0, #Don't use
+            "total_ms": round(total_ms, 2),
+        },
+    )
+    
+    # logger.info(
+    #     "Agentic-only search done — results=%d total=%.0fms",
+    #     len(agentic_results), total_ms,
+    # )
+    
+    #To unify logger format with the search execution
+    logger.info(
+        "Search done — agentic=%d heuristic=%d final=%d "
+        "agentic=%.0fms heuristic=%.0fms wall=%.0fms",
+        len(agentic_results), 0, len(agentic_results),
+        agentic_ms, 0, total_ms,
+    )
+    
+    return response
+
+
+def execute_heuristic_only_search(query_bundle: Dict[str, Any], top_k: int = 10) -> SearchResponse:
+    """Run only the heuristic branch."""
+    t_start = time.perf_counter()
+    
+    heuristic_results, heuristic_ms = _run_heuristic(query_bundle, top_k)
+    
+    total_ms = (time.perf_counter() - t_start) * 1000
+    raw_query = query_bundle.get("raw", query_bundle.get("cleaned", ""))
+    
+    response = build_response(
+        query=raw_query,
+        candidates=heuristic_results,
+        latency_ms={
+            "agentic_ms": 0.0,
+            "heuristic_ms": round(heuristic_ms, 2),
+            "rerank_ms": 0.0,
+            "total_ms": round(total_ms, 2),
+        },
+    )
+    
+    # logger.info(
+    #     "Heuristic-only search done — results=%d total=%.0fms",
+    #     len(heuristic_results), total_ms,
+    # )
+    
+    logger.info(
+        "Search done — agentic=%d heuristic=%d final=%d "
+        "agentic=%.0fms heuristic=%.0fms wall=%.0fms",
+        0, len(heuristic_results), len(heuristic_results),
+        0, heuristic_ms, total_ms,
+    )
+    
+    return response

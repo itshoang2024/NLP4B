@@ -168,7 +168,7 @@ def load_metadata_csv(csv_path: str) -> dict[str, dict]:
             vid = row.get("video_id", "")
             if vid:
                 meta_dict[vid] = {
-                    "source_url": row.get("source_url", ""),
+                    "source_url": row.get("source_url", row.get("url", "")),
                     "fps": float(row.get("fps", 1.0) or 1.0)
                 }
     logger.info(f"Loaded metadata for {len(meta_dict)} videos.")

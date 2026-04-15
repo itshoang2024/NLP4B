@@ -137,8 +137,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="4-Vector Qdrant Upsert — Azure Streaming (RAM-optimized) with OCR & Metadata"
     )
-    p.add_argument("--mode", choices=["upsert", "update"], default="upsert",
-                   help="'upsert': Full point creation. 'update': Update specific payloads/vectors on existing points.")
+    p.add_argument("--mode", choices=["upsert", "update", "debug"], default="upsert",
+                   help="'upsert': Full point creation. 'update': Update payload/vectors. 'debug': Full upsert restricted to video_ids listed in --video_metadata_link CSV.")
     p.add_argument("--update_payloads", default="ocr_text,youtube_link,timestamp_sec",
                    help="Comma-separated payload fields to set (mode='update').")
     p.add_argument("--update_vectors", default="keyframe-ocr-sparse",
@@ -828,6 +828,20 @@ def main() -> None:
     t0 = time.time()
     total_ok = total_fail = 0
     n_det = n_dense = 0
+
+    # ── Debug mode: restrict to video_ids in metadata CSV ────────────────
+    if args.mode == "debug":
+        if not meta_dict:
+            logger.error("--mode debug requires --video_metadata_link with valid video_ids")
+            sys.exit(1)
+        original_count = len(video_map)
+        debug_ids = set(meta_dict.keys())
+        video_map = {vid: path for vid, path in video_map.items() if vid in debug_ids}
+        missing = debug_ids - set(video_map.keys())
+        logger.info(f"[DEBUG] Filtered {original_count} → {len(video_map)} videos (from CSV)")
+        if missing:
+            logger.warning(f"[DEBUG] {len(missing)} video_ids in CSV not found in Azure: {sorted(missing)}")
+        args.mode = "upsert"  # Run full upsert logic on the filtered set
 
     video_ids = sorted(video_map.keys())
     

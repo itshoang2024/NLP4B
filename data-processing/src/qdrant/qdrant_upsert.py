@@ -575,6 +575,7 @@ def generate_points(
         youtube_link = f"{source_url}&t={calculated_sec}s" if source_url else ""
 
         # ── Base payload ─────────────────────────────────────────────
+        dense_vec = embeddings[idx].tolist()
         vectors: dict = {VEC_DENSE: dense_vec}
         payload: dict = {
             "video_id": video_id,

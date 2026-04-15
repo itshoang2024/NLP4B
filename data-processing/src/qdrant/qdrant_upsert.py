@@ -94,7 +94,13 @@ from qdrant_client.models import (
     SparseVectorParams,
     VectorParams,
 )
-from qdrant_client.http.models import SetPayloadOperation, SetPayload
+from qdrant_client.http.models import (
+    SetPayloadOperation,
+    SetPayload,
+    ScalarQuantization,
+    ScalarQuantizationConfig,
+    ScalarType,
+)
 
 # ── 2. Logging ────────────────────────────────────────────────────────────────
 LOG_FMT = "[%(asctime)s] %(levelname)-8s %(message)s"
@@ -490,6 +496,13 @@ def ensure_collection(client: QdrantClient, name: str) -> None:
             VEC_OBJECT_SPARSE: SparseVectorParams(index=SparseIndexParams(on_disk=False)),
             VEC_OCR_SPARSE: SparseVectorParams(index=SparseIndexParams(on_disk=False)),
         },
+        quantization_config=ScalarQuantization(
+            scalar=ScalarQuantizationConfig(
+                type=ScalarType.INT8,
+                quantile=0.99,
+                always_ram=True,
+            )
+        ),
     )
     # create payload indices
     for field in ["tags", "video_id"]:

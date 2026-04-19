@@ -39,6 +39,8 @@ def build_response(
             azure_url=payload.get("azure_url"),
             youtube_link=payload.get("youtube_link"),
             ocr_text=payload.get("ocr_text"),
+            timestamp_start=payload.get("timestamp_start"),
+            timestamp_end=payload.get("timestamp_end"),
             evidence=item.get("evidence", []),
         ))
 

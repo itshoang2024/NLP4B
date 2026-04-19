@@ -36,6 +36,8 @@ class SearchResultItem(BaseModel):
     azure_url: Optional[str] = None
     youtube_link: Optional[str] = None
     ocr_text: Optional[str] = None
+    timestamp_start: Optional[float] = None
+    timestamp_end: Optional[float] = None
     evidence: List[str] = Field(default_factory=list)
 
 

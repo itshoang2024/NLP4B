@@ -64,7 +64,7 @@ info_json/
 downloaded_videos/
 notebook/
 templates/
-output/
+output/_temp
 
 # Notebook outputs / misc
 *.out

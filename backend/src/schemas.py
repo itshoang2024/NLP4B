@@ -31,6 +31,8 @@ class SearchResultItem(BaseModel):
     frame_id: int
     score: float
     branch: str                             # "agentic" | "heuristic" | "fused"
+    timestamp_start: Optional[float] = None
+    timestamp_end: Optional[float] = None
     azure_url: Optional[str] = None
     youtube_link: Optional[str] = None
     ocr_text: Optional[str] = None

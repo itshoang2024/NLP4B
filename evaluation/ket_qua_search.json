@@ -1,0 +1,44 @@
+{
+    "metrics": {
+        "HitRatio@5": 0.0,
+        "MRR": 0.0
+    },
+    "details": [
+        {
+            "index": 0,
+            "ground_truth": {
+                "video_id": "w2nmzwknVco",
+                "timestamp": [
+                    1.3599999999999999,
+                    81.72
+                ]
+            },
+            "retrieved": [],
+            "latency": 23.43
+        },
+        {
+            "index": 1,
+            "ground_truth": {
+                "video_id": "wq9wywa4xiM",
+                "timestamp": [
+                    8.295,
+                    57.133
+                ]
+            },
+            "retrieved": [],
+            "latency": 23.6634
+        },
+        {
+            "index": 2,
+            "ground_truth": {
+                "video_id": "x8G-pQ4b6aM",
+                "timestamp": [
+                    2.999,
+                    117.93414965986395
+                ]
+            },
+            "retrieved": [],
+            "latency": 23.3746
+        }
+    ]
+}

@@ -34,6 +34,8 @@ def build_response(
             frame_id=int(item.get("frame_id") or payload.get("frame_idx") or 0),
             score=round(float(item.get("score", 0.0)), 6),
             branch=item.get("branch", "unknown"),
+            timestamp_start=payload.get("timestamp_start"),
+            timestamp_end=payload.get("timestamp_end"),
             azure_url=payload.get("azure_url"),
             youtube_link=payload.get("youtube_link"),
             ocr_text=payload.get("ocr_text"),

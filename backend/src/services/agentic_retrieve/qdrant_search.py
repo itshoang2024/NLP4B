@@ -67,6 +67,8 @@ DEFAULT_PAYLOAD_FIELDS = [
     "frame_idx",
     "azure_url",
     "timestamp_sec",
+    "timestamp_start",
+    "timestamp_end",
     "youtube_link",
     "tags",
     "caption",

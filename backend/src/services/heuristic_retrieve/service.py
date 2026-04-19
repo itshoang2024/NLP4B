@@ -35,6 +35,7 @@ COLLECTION_NAME = "keyframes_v1"
 
 PAYLOAD_FIELDS = [
     "video_id", "frame_idx", "azure_url", "timestamp_sec",
+    "timestamp_start", "timestamp_end",
     "youtube_link", "tags", "caption", "detailed_caption",
     "object_counts", "ocr_text", "title",
 ]

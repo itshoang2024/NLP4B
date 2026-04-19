@@ -589,33 +589,55 @@ body,
     animation: pulse-sparkle 2s ease-in-out infinite;
 }
 
-/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+/* ── Sidebar ───────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
     background: #ffffff !important;
     border-right: 1.5px solid #eaecf4 !important;
     padding-top: 0 !important;
+    /* disable slide animation — sidebar is always visible */
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+    min-width: 240px !important;
+    max-width: 320px !important;
+    flex-shrink: 0 !important;
+}
+
+/* Kill the slide-in/out motion on the inner wrapper too */
+[data-testid="stSidebar"] > div {
+    transition: none !important;
+    animation: none !important;
 }
 
 [data-testid="stSidebar"] > div:first-child {
-    padding: 16px 20px 24px !important;
+    padding: 24px 20px 24px !important;
 }
 
-/* Custom Absolute Brand Logo */
-.absolute-brand-logo {
-    position: fixed !important;
-    top: 24px !important;
-    left: 24px !important;
-    z-index: 999999 !important;
-    
+/* Hide ALL toggle/collapse/expand controls — sidebar is always static */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stExpandSidebarButton"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    display: none !important;
+}
+
+/* Keep the sidebar always in expanded layout */
+[data-testid="stAppViewContainer"] > .main {
+    margin-left: 0 !important;
+}
+
+.sidebar-brand-logo {
+    display: block;
     font-size: 26px;
     font-weight: 800;
     color: #12122a !important;
     text-decoration: none !important;
     letter-spacing: -0.8px;
+    margin-bottom: 24px;
     transition: color 0.15s ease, opacity 0.15s ease;
 }
 
-.absolute-brand-logo:hover {
+.sidebar-brand-logo:hover {
     color: #5a8dec !important;
     opacity: 0.85;
 }
@@ -714,10 +736,33 @@ body,
     line-height: 1.55;
 }
 
-/* Hide sidebar toggle buttons completely – sidebar is always open */
+/* ── Sidebar toggle buttons ──────────────────────────────────────────────── */
 [data-testid="stSidebarCollapseButton"],
-[data-testid="stExpandSidebarButton"],
-[data-testid="collapsedControl"],
-[data-testid="stSidebarCollapsedControl"] {
-    display: none !important;
+[data-testid="stExpandSidebarButton"] {
+    background: transparent !important;
+    border: none !important;
+    color: #6b7280 !important;
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+}
+
+[data-testid="stSidebarCollapseButton"]:hover,
+[data-testid="stExpandSidebarButton"]:hover {
+    opacity: 1;
+    background: rgba(90, 141, 236, 0.08) !important;
+}
+
+/* Collapsed control (the hamburger shown when sidebar is hidden) */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff !important;
+    border-radius: 0 10px 10px 0 !important;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.08) !important;
+    border: 1px solid #eaecf4 !important;
+    border-left: none !important;
+    width: 32px !important;
+    min-height: 48px !important;
 }

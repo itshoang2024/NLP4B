@@ -20,11 +20,6 @@ with open(os.path.join(BASE_DIR, "assets", "styles", "main.css"), "r", encoding=
 
 st.markdown(f"<style>{_APP_CSS}</style>", unsafe_allow_html=True)
 
-# Absolute Logo (Fixed at Top-Left)
-st.markdown(
-    '<a href="/" target="_self" class="absolute-brand-logo" title="Về trang chủ">LookUp.ai</a>',
-    unsafe_allow_html=True
-)
 
 # Fix nút toggle sidebar: thay icon lỗi (keyboard_double_arrow text) bằng SVG chevron
 st.markdown("""
@@ -283,10 +278,44 @@ def build_cards_iframe(results: list[dict]) -> tuple[str, int]:
     return full_html, height
 
 
-# ── UI: Brand logo ────────────────────────────────────────────────────────────
-st.markdown('<a href="/" target="_self" class="brand-logo" title="Về trang chủ">LookUp.ai</a>', unsafe_allow_html=True)
+# ── UI: Sidebar ────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown('<a href="/" target="_self" class="sidebar-brand-logo" title="Về trang chủ">LookUp.ai</a>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-divider" style="margin-top: 16px;"></div>', unsafe_allow_html=True)
+    
+    st.markdown('<div class="sidebar-section-label">Chiến lược tìm kiếm</div>', unsafe_allow_html=True)
 
-# ── UI: Idle hero (shown only when no results) ────────────────────────────────
+    strategy_label = st.radio(
+        label="",
+        options=list(STRATEGY_OPTIONS.keys()),
+        index=0,
+        label_visibility="collapsed",
+    )
+    current_strategy = STRATEGY_OPTIONS[strategy_label]
+
+    st.markdown('<div class="sidebar-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-section-label">Số kết quả</div>', unsafe_allow_html=True)
+
+    current_top_k = st.slider("", min_value=5, max_value=30, value=DEFAULT_TOP_K, step=5, label_visibility="collapsed")
+    st.markdown(f'<div class="sidebar-k-badge">Trả về <span>{current_top_k}</span> kết quả</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="sidebar-divider"></div>', unsafe_allow_html=True)
+
+    strategy_infos = {
+        "both": ("both", "🔀 RRF Fusion", "Kết hợp Agentic + Heuristic, rerank bằng Reciprocal Rank Fusion — chính xác nhất."),
+        "agentic": ("agentic", "🤖 Agentic", "LangGraph pipeline phân tích ngữ nghĩa, sinh query đa dạng — hiểu sâu ngữ cảnh."),
+        "heuristic": ("heuristic", "📊 Heuristic", "Tìm kiếm Qdrant 2 tầng, nhanh và ổn định."),
+    }
+    badge_cls, badge_label, desc = strategy_infos[current_strategy]
+    st.markdown(
+        f'<div class="sidebar-strategy-info">'
+        f'  <div class="strategy-badge {badge_cls}">{badge_label}</div>'
+        f'  <div class="strategy-desc">{desc}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+# ── UI: Idle hero (shown only when no results) ────────────────────────
 hero_placeholder = st.empty()
 
 if "results_data" not in st.session_state:
@@ -359,12 +388,12 @@ if search_query:
     spinner = st.empty()
     spinner.markdown(SPINNER_HTML, unsafe_allow_html=True)
 
-    data = call_search_api(query_to_run, top_k=current_top_k, strategy=current_strategy)
+    data = call_search_api(search_query, top_k=current_top_k, strategy=current_strategy)
     spinner.empty()
 
     if data:
         st.session_state["results_data"] = data
-        st.session_state["last_query"] = query_to_run
+        st.session_state["last_query"] = search_query
         st.session_state["last_strategy"] = current_strategy
         st.session_state["last_top_k"] = current_top_k
         st.rerun()

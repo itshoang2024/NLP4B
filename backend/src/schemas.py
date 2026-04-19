@@ -7,7 +7,7 @@ are co-located here so that all layers share the same definitions.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,10 @@ class SearchRequest(BaseModel):
     """Raw search request from the frontend."""
     raw_query: str = Field(..., min_length=1, description="Natural language search query")
     top_k: int = Field(default=10, ge=1, le=50, description="Number of results to return")
+    strategy: Literal["agentic", "heuristic", "both"] = Field(
+        default="both",
+        description="Search strategy: 'agentic' (intent-aware), 'heuristic' (dense hybrid), or 'both' (RRF fusion)",
+    )
 
 
 class SearchResultItem(BaseModel):

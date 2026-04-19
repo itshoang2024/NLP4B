@@ -52,6 +52,16 @@ body,
     opacity: 0.85;
 }
 
+[data-testid="stMainBlockContainer"] {
+    padding-top: 0 !important;
+}
+
+[data-testid="stVerticalBlock"] {
+    gap: 0 !important;
+}
+
+/* ── Removed old absolute brand logo ── */
+
 /* ── Hero (idle state) ────────────────────────────────────────────────────── */
 .hero-center {
     min-height: 80vh;
@@ -577,4 +587,137 @@ body,
     font-weight: 500;
     color: #4a5568;
     animation: pulse-sparkle 2s ease-in-out infinite;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: #ffffff !important;
+    border-right: 1.5px solid #eaecf4 !important;
+    padding-top: 0 !important;
+}
+
+[data-testid="stSidebar"] > div:first-child {
+    padding: 16px 20px 24px !important;
+}
+
+/* Custom Absolute Brand Logo */
+.absolute-brand-logo {
+    position: fixed !important;
+    top: 24px !important;
+    left: 24px !important;
+    z-index: 999999 !important;
+    
+    font-size: 26px;
+    font-weight: 800;
+    color: #12122a !important;
+    text-decoration: none !important;
+    letter-spacing: -0.8px;
+    transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+.absolute-brand-logo:hover {
+    color: #5a8dec !important;
+    opacity: 0.85;
+}
+
+.sidebar-divider {
+    height: 1px;
+    background: linear-gradient(90deg, #e2e5f1 0%, transparent 100%);
+    margin: 32px 0;
+}
+
+.sidebar-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 24px;
+}
+
+.sidebar-k-badge {
+    margin-top: 24px;
+    font-size: 13px;
+    color: #6b7280;
+    font-weight: 500;
+    text-align: center;
+}
+
+.sidebar-k-badge span {
+    font-size: 22px;
+    font-weight: 800;
+    color: #5a8dec;
+    display: block;
+    line-height: 1;
+}
+
+/* Streamlit slider thumb override */
+[data-testid="stSidebar"] [data-testid="stSlider"] > div {
+    padding: 0 2px;
+}
+
+[data-testid="stSidebar"] .stSlider [data-baseweb="slider"] [role="slider"] {
+    background: #5a8dec !important;
+    border-color: #5a8dec !important;
+}
+
+/* Radio buttons in sidebar */
+[data-testid="stSidebar"] [data-testid="stRadio"] label {
+    font-size: 13.5px !important;
+    font-weight: 500 !important;
+    color: #374151 !important;
+    gap: 12px;
+    padding: 10px 0;
+    margin-bottom: 6px;
+    cursor: pointer;
+}
+
+[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
+    font-size: 13.5px !important;
+}
+
+.sidebar-strategy-info {
+    background: #f7f8fc;
+    border-radius: 12px;
+    border: 1.5px solid #e8eaf2;
+    padding: 16px 16px;
+    margin-top: 16px;
+}
+
+.strategy-badge {
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 8px;
+    padding: 4px 10px;
+    display: inline-block;
+    margin-bottom: 8px;
+}
+
+.strategy-badge.both {
+    background: rgba(245, 158, 11, 0.12);
+    color: #b45309;
+}
+
+.strategy-badge.agentic {
+    background: rgba(99, 102, 241, 0.12);
+    color: #4338ca;
+}
+
+.strategy-badge.heuristic {
+    background: rgba(16, 185, 129, 0.12);
+    color: #065f46;
+}
+
+.strategy-desc {
+    font-size: 12px;
+    color: #6b7280;
+    line-height: 1.55;
+}
+
+/* Hide sidebar toggle buttons completely – sidebar is always open */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stExpandSidebarButton"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"] {
+    display: none !important;
 }

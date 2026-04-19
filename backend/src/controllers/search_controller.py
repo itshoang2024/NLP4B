@@ -62,7 +62,11 @@ def _run_heuristic(query_bundle: Dict[str, Any], top_k: int) -> Tuple[List, floa
     return results, (time.perf_counter() - t) * 1000
 
 
-def execute_search(query_bundle: Dict[str, Any], top_k: int = 10) -> SearchResponse:
+def execute_search(
+    query_bundle: Dict[str, Any],
+    top_k: int = 10,
+    strategy: str = "both",
+) -> SearchResponse:
     """
     Parallel search orchestration:
       1a. agentic_retrieve  ─┐ (concurrent — wall time = max of two)
@@ -79,35 +83,53 @@ def execute_search(query_bundle: Dict[str, Any], top_k: int = 10) -> SearchRespo
     """
     t_start = time.perf_counter()
 
-    # ── 1. Run both branches in parallel ─────────────────────────────────────
     agentic_results: List = []
     heuristic_results: List = []
     agentic_ms = 0.0
     heuristic_ms = 0.0
 
-    branch_top_k = top_k * 2  # each branch over-fetches for better fusion
+    branch_top_k = top_k * 2  # over-fetch for better fusion
 
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="search") as pool:
-        fut_agentic   = pool.submit(_run_agentic,   query_bundle, branch_top_k)
-        fut_heuristic = pool.submit(_run_heuristic, query_bundle, branch_top_k)
+    # ── 1. Run branch(es) ──────────────────────────────────────────────────────
+    if strategy == "agentic":
+        agentic_results, agentic_ms = _run_agentic(query_bundle, branch_top_k)
 
-        # Collect results as they complete (order may vary)
-        for fut in as_completed([fut_agentic, fut_heuristic]):
-            if fut is fut_agentic:
-                agentic_results, agentic_ms = fut.result()
-            else:
-                heuristic_results, heuristic_ms = fut.result()
+    elif strategy == "heuristic":
+        heuristic_results, heuristic_ms = _run_heuristic(query_bundle, branch_top_k)
 
-    # ── 2. Cross-source RRF rerank ────────────────────────────────────────────
+    else:  # "both" — parallel
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="search") as pool:
+            fut_agentic   = pool.submit(_run_agentic,   query_bundle, branch_top_k)
+            fut_heuristic = pool.submit(_run_heuristic, query_bundle, branch_top_k)
+
+            for fut in as_completed([fut_agentic, fut_heuristic]):
+                if fut is fut_agentic:
+                    agentic_results, agentic_ms = fut.result()
+                else:
+                    heuristic_results, heuristic_ms = fut.result()
+
+    # ── 2. Rerank / pass-through ───────────────────────────────────────────────
     t_rerank = time.perf_counter()
-    final_candidates = cross_source_rerank(
-        agentic_results=agentic_results,
-        heuristic_results=heuristic_results,
-        top_k=top_k,
-    )
+
+    if strategy == "both":
+        final_candidates = cross_source_rerank(
+            agentic_results=agentic_results,
+            heuristic_results=heuristic_results,
+            top_k=top_k,
+        )
+    elif strategy == "agentic":
+        # Tag branch and slice to top_k directly — no fusion needed
+        for c in agentic_results:
+            c["branch"] = "agentic"
+        final_candidates = agentic_results[:top_k]
+    else:  # heuristic only
+        for c in heuristic_results:
+            c["branch"] = "heuristic"
+        final_candidates = heuristic_results[:top_k]
+
     rerank_ms = (time.perf_counter() - t_rerank) * 1000
 
-    # ── 3. Build response ─────────────────────────────────────────────────────
+    # ── 3. Build response ──────────────────────────────────────────────────────
     total_ms = (time.perf_counter() - t_start) * 1000
     raw_query = query_bundle.get("raw", query_bundle.get("cleaned", ""))
 
@@ -123,9 +145,9 @@ def execute_search(query_bundle: Dict[str, Any], top_k: int = 10) -> SearchRespo
     )
 
     logger.info(
-        "Search done — agentic=%d heuristic=%d final=%d "
+        "Search done [strategy=%s] — agentic=%d heuristic=%d final=%d "
         "agentic=%.0fms heuristic=%.0fms wall=%.0fms",
-        len(agentic_results), len(heuristic_results), len(final_candidates),
+        strategy, len(agentic_results), len(heuristic_results), len(final_candidates),
         agentic_ms, heuristic_ms, total_ms,
     )
 

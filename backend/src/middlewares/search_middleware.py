@@ -22,6 +22,7 @@ class ProcessedSearchRequest(BaseModel):
     """Request after middleware processing — carries the full query bundle."""
     raw_query: str
     top_k: int = 10
+    strategy: str = "both"
     query_bundle: dict = Field(default_factory=dict)
 
 
@@ -169,5 +170,6 @@ def clean_and_translate_middleware(payload: SearchRequest) -> ProcessedSearchReq
     return ProcessedSearchRequest(
         raw_query=raw_query,
         top_k=payload.top_k,
+        strategy=payload.strategy,
         query_bundle=query_bundle,
     )

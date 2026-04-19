@@ -44,6 +44,7 @@ def search_endpoint(
     return execute_search(
         query_bundle=request.query_bundle,
         top_k=request.top_k,
+        strategy=request.strategy,
     )
 
 

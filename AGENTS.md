@@ -24,6 +24,7 @@ Before making non-trivial changes, inspect these locations first:
 - `data-processing/src/embedding/embedding.py`
 - `data-processing/src/keyframe_extraction/LMSKE.py`
 - `data-processing/src/object_detection/object_detection.py`
+- `data-processing/src/ocr/paddle_ocr.py`
 - `data-processing/src/azure_migrator.py`
 - `backend/api.py`
 - `backend/src/controllers/search_controller.py`
@@ -47,7 +48,7 @@ Important subareas:
 - `src/keyframe_extraction/`: shot segmentation, feature extraction, clustering, redundancy elimination, keyframe save logic
 - `src/embedding/`: keyframe embedding generation
 - `src/object_detection/`: object detection + captioning / region annotation pipeline
-- `src/ocr/`: text detection (CRAFT) and recognition (PaddleOCR) from keyframe images
+- `src/ocr/`: OCR text extraction from keyframe images using PaddleOCR-VL 1.5 (VLM-based)
 - `src/qdrant/` and `src/faiss/`: vector indexing / search support
 - `src/scripts/`: auxiliary scripts
 - `notebook/`: experimentation and staged processing notebooks
@@ -131,7 +132,7 @@ Produced / consumed by `azure_migrator.py`:
 - Azure container `object-detection`: `{video_id}/{video_id}_object_detection.json`
 
 ### OCR artifacts
-Produced by `data-processing/src/ocr/` pipeline (CRAFT + PaddleOCR):
+Produced by `data-processing/src/ocr/paddle_ocr.py` (PaddleOCR-VL 1.5):
 - `<video_id>_ocr.json` — array of `{"image": "<filename>", "ocr_text": "<text>"}` entries
 
 Consumed by `qdrant_upsert.py` via `build_ocr_lookup()` to populate the `ocr_text` payload field and `keyframe-ocr-sparse` vector.
@@ -174,7 +175,14 @@ Entry point:
 Expected result:
 - one combined JSON per video folder
 
-### Workflow E: retrieval-time execution (backend API)
+### Workflow E: OCR text extraction
+Entry point:
+- `python -m src.ocr.paddle_ocr -i <keyframe_dir> -o <output_dir>` run from `data-processing/`
+
+Expected result:
+- one `<video_id>_ocr.json` per video folder (array of `{"image", "ocr_text"}` entries)
+
+### Workflow F: retrieval-time execution (backend API)
 Entry points:
 - `backend/api.py` — FastAPI server (`uvicorn api:app --port 8000`)
 - `backend/test/run_agentic_demo.py` — standalone agentic demo (CLI)
@@ -199,6 +207,7 @@ If you change CLI arguments in scripts such as:
 - `LMSKE.py`
 - `embedding.py`
 - `object_detection.py`
+- `paddle_ocr.py`
 - `azure_migrator.py`
 then update:
 - usage docs

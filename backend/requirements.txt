@@ -20,3 +20,6 @@ openai>=1.0.0
 
 # Language detection
 langdetect
+
+# Supabase
+supabase>=2.0.0

@@ -123,7 +123,7 @@ The system has four runtime boundaries:
 | `src/keyframe_extraction/LMSKE.py` | Video file path/URL | `<output>/<video_id>/<video_id>_XXXXX.jpg`, `_scenes.txt` |
 | `src/embedding/embedding.py` | Keyframe image directory | `<video_id>.npy` (N×1152), `<video_id>_frames.json` |
 | `src/object_detection/object_detection.py` | Keyframe image directory | `<video_id>_object_detection.json` |
-| `src/ocr/` | Keyframe images | OCR text extraction (CRAFT + PaddleOCR) |
+| `src/ocr/paddle_ocr.py` | Keyframe image directory | `<video_id>_ocr.json` (PaddleOCR-VL 1.5) |
 | `src/azure_migrator.py` | Local artifact directories | Azure Blob containers: `keyframes`, `embeddings`, `ocr` |
 | `src/qdrant/qdrant_upsert.py` | Azure Blob artifacts | Qdrant `keyframes_v1` collection (4-vector points) |
 | `src/faiss/build_index.py` | Embedding `.npy` files | Local FAISS index |
@@ -211,6 +211,7 @@ Models used in indexing (qdrant_upsert.py) **must match** models hosted in the e
 | `openai/clip-vit-large-patch14` | Feature extraction for keyframe clustering | 768 | LMSKE.py (offline only, not indexed) |
 | `microsoft/Florence-2-large-ft` | Rich captioning + object detection | — | object_detection.py |
 | `yolov8m-worldv2` | Fast object detection | — | object_detection.py |
+| `PaddlePaddle/PaddleOCR-VL-1.5` | VLM-based OCR text extraction | — | paddle_ocr.py (offline only, output consumed by qdrant_upsert.py) |
 
 > **Important:** Changing a model in the embedding service without matching it in qdrant_upsert.py will produce mismatched vectors and silently break retrieval. The retrieval module (`qdrant_search.py`) is model-agnostic — it delegates all encoding to the Azure API.
 

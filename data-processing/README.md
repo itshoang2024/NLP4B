@@ -43,10 +43,8 @@ data-processing/
 │   │   └── object_detection_info.md  # Feature documentation
 │   │
 │   ├── ocr/                       # Step 4b: Text recognition
-│   │   ├── craft.py               # CRAFT text detection
-│   │   ├── paddle_detect.py       # PaddleOCR detection
-│   │   ├── recognize.py           # Text recognition
-│   │   └── refine.py              # Post-processing
+│   │   ├── paddle_ocr.py          # Entry point (PaddleOCR-VL 1.5)
+│   │   └── PaddleOCR.ipynb        # Original Colab notebook
 │   │
 │   ├── qdrant/                    # Step 5: Vector indexing
 │   │   └── qdrant_upsert.py       # 4-vector Qdrant upsert (streams from Azure)
@@ -164,15 +162,24 @@ python src/object_detection/object_detection.py \
 
 ---
 
-### Step 4b: OCR (CRAFT + PaddleOCR)
+### Step 4b: OCR (PaddleOCR-VL 1.5)
 
-The OCR pipeline is in `src/ocr/` and consists of:
-- `craft.py` — CRAFT text detection
-- `paddle_detect.py` — PaddleOCR detection
-- `recognize.py` — Text recognition
-- `refine.py` — Post-processing and cleanup
+```bash
+python -m src.ocr.paddle_ocr \
+    -i ./output/keyframes/<video_id> \
+    -o ./output/ocr \
+    --batch_size 6
+```
+
+**Input:** Directory containing keyframe `.jpg` images.
 
 **Output:** `<video_id>_ocr.json` — array of `{"image": "<filename>", "ocr_text": "<text>"}` entries.
+
+**Model:** `PaddlePaddle/PaddleOCR-VL-1.5` (VLM-based OCR, requires `transformers>=5.0.0`, GPU recommended)
+
+**Key CLI args:** `--model`, `--batch_size 6`, `--max_new_tokens 512`, `--limit`, `--save_every 50`, `--prepare_only`, `--hf_cache_dir`
+
+**Features:** Checkpoint saving, resume support, atomic writes, `--prepare_only` for model pre-download on Kaggle/Colab.
 
 ---
 
@@ -223,6 +230,7 @@ The `notebook/` directory provides Colab-friendly step-by-step execution:
 | `04_faiss_indexing.ipynb` | FAISS alternative to Qdrant |
 | `object_detection.ipynb` | Step 4a (local) |
 | `object_detection_kaggle.ipynb` | Step 4a (Kaggle GPU) |
+| `PaddleOCR.ipynb` (in `src/ocr/`) | Step 4b (original notebook) |
 | `azure_migration.ipynb` | Step 5 |
 
 ## What to test after changes
@@ -232,4 +240,5 @@ The `notebook/` directory provides Colab-friendly step-by-step execution:
 - If you change **embedding generation**: verify `.npy` shape is `(N, 1152)` and `_frames.json` ordering matches
 - If you change **object detection**: verify JSON schema matches [the contract](../docs/contracts/object-detection-output.md)
 - If you change **azure_migrator**: verify blob path conventions match what `qdrant_upsert.py` expects
+- If you change **OCR** (`paddle_ocr.py`): verify JSON schema `{"image": str, "ocr_text": str}` is preserved; check `build_ocr_lookup()` in `qdrant_upsert.py`
 - If you change **qdrant_upsert**: verify against [the Qdrant schema contract](../docs/contracts/qdrant-collection-schema.md)

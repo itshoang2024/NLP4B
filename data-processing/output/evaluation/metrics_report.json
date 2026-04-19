@@ -1,17 +1,29 @@
 {
-  "timestamp": "2026-04-19T16:39:51.769347+00:00",
+  "timestamp": "2026-04-19T17:36:04.892657+00:00",
   "results": [
     {
       "strategy": "agentic",
       "top_k": 5,
       "n_queries": 200,
-      "MRR": 0.4872,
+      "MRR": 0.4897,
       "HitRatio@5": 0.68,
-      "mean_IoU_Top1": 0.2309,
-      "R@1_IoU0.3": 0.26,
-      "R@1_IoU0.5": 0.21,
+      "mean_IoU_Top1": 0.2337,
+      "R@1_IoU0.3": 0.265,
+      "R@1_IoU0.5": 0.215,
       "R@1_IoU0.7": 0.19,
-      "latency_mean_ms": 4576.87
+      "latency_mean_ms": 4697.85
+    },
+    {
+      "strategy": "baseline_siglip",
+      "top_k": 5,
+      "n_queries": 200,
+      "MRR": 0.5157,
+      "HitRatio@5": 0.63,
+      "mean_IoU_Top1": 0.2773,
+      "R@1_IoU0.3": 0.33,
+      "R@1_IoU0.5": 0.255,
+      "R@1_IoU0.7": 0.21,
+      "latency_mean_ms": 986.36
     },
     {
       "strategy": "both",
@@ -23,7 +35,7 @@
       "R@1_IoU0.3": 0.265,
       "R@1_IoU0.5": 0.185,
       "R@1_IoU0.7": 0.15,
-      "latency_mean_ms": 4571.13
+      "latency_mean_ms": 4673.93
     },
     {
       "strategy": "heuristic",

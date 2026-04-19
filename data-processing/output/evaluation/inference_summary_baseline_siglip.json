@@ -1,0 +1,22 @@
+{
+  "strategy": "baseline_siglip",
+  "batch": 0,
+  "total_batches": 4,
+  "total_queries": 200,
+  "successful_queries": 200,
+  "failed_queries": 0,
+  "empty_result_queries": 0,
+  "business_metrics": {
+    "error_rate_pct": 0.0,
+    "empty_result_rate_pct": 0.0,
+    "latency_mean_ms": 986.36,
+    "latency_p50_ms": 966.63,
+    "latency_p95_ms": 1161.81,
+    "latency_p99_ms": 1557.42,
+    "latency_min_ms": 931.66,
+    "latency_max_ms": 1626.97,
+    "throughput_qps": 0.9205,
+    "total_runtime_sec": 217.28
+  },
+  "timestamp": "2026-04-19T17:35:41.918872+00:00"
+}

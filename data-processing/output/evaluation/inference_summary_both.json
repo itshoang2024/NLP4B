@@ -5,23 +5,23 @@
   "api_url": "https://nlp4b.vercel.app",
   "top_k": 5,
   "total_queries": 200,
-  "successful_queries": 100,
-  "failed_queries": 100,
+  "successful_queries": 200,
+  "failed_queries": 0,
   "empty_result_queries": 0,
   "business_metrics": {
-    "error_rate_pct": 50.0,
+    "error_rate_pct": 0.0,
     "timeout_rate_pct": 0.0,
     "empty_result_rate_pct": 0.0,
-    "latency_mean_ms": 4872.92,
-    "latency_p50_ms": 4677.05,
-    "latency_p95_ms": 5578.11,
-    "latency_p99_ms": 5872.31,
-    "latency_min_ms": 4471.62,
-    "latency_max_ms": 5872.31,
-    "network_overhead_mean_ms": 288.83,
+    "latency_mean_ms": 4944.25,
+    "latency_p50_ms": 4856.68,
+    "latency_p95_ms": 5869.39,
+    "latency_p99_ms": 6261.06,
+    "latency_min_ms": 4415.17,
+    "latency_max_ms": 6362.76,
+    "network_overhead_mean_ms": 270.33,
     "cold_start_rate_pct": 0.0,
-    "throughput_qps": 0.3725,
-    "total_runtime_sec": 536.87
+    "throughput_qps": 0.1837,
+    "total_runtime_sec": 1088.5
   },
-  "timestamp": "2026-04-19T16:14:47.462374+00:00"
+  "timestamp": "2026-04-19T17:16:02.445051+00:00"
 }

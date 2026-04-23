@@ -2,21 +2,21 @@
   "strategy": "baseline_siglip",
   "batch": 0,
   "total_batches": 4,
-  "total_queries": 200,
-  "successful_queries": 200,
+  "total_queries": 13410,
+  "successful_queries": 13410,
   "failed_queries": 0,
   "empty_result_queries": 0,
   "business_metrics": {
     "error_rate_pct": 0.0,
     "empty_result_rate_pct": 0.0,
-    "latency_mean_ms": 986.36,
-    "latency_p50_ms": 966.63,
-    "latency_p95_ms": 1161.81,
-    "latency_p99_ms": 1557.42,
-    "latency_min_ms": 931.66,
-    "latency_max_ms": 1626.97,
-    "throughput_qps": 0.9205,
-    "total_runtime_sec": 217.28
+    "latency_mean_ms": 1716.57,
+    "latency_p50_ms": 1262.67,
+    "latency_p95_ms": 3146.02,
+    "latency_p99_ms": 3499.18,
+    "latency_min_ms": 1229.12,
+    "latency_max_ms": 4982.03,
+    "throughput_qps": 0.55,
+    "total_runtime_sec": 24382.73
   },
-  "timestamp": "2026-04-19T17:35:41.918872+00:00"
+  "timestamp": "2026-04-21T00:25:12.401711+00:00"
 }

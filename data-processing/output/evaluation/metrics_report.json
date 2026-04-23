@@ -1,53 +1,53 @@
 {
-  "timestamp": "2026-04-19T17:36:04.892657+00:00",
+  "timestamp": "2026-04-23T03:24:06.595652+00:00",
   "results": [
     {
       "strategy": "agentic",
       "top_k": 5,
-      "n_queries": 200,
-      "MRR": 0.4897,
-      "HitRatio@5": 0.68,
-      "mean_IoU_Top1": 0.2337,
-      "R@1_IoU0.3": 0.265,
-      "R@1_IoU0.5": 0.215,
-      "R@1_IoU0.7": 0.19,
-      "latency_mean_ms": 4697.85
+      "n_queries": 13410,
+      "MRR": 0.3295,
+      "HitRatio@5": 0.5359,
+      "mean_IoU_Top1": 0.1233,
+      "R@1_IoU0.3": 0.1528,
+      "R@1_IoU0.5": 0.1159,
+      "R@1_IoU0.7": 0.089,
+      "latency_mean_ms": 4334.86
     },
     {
       "strategy": "baseline_siglip",
       "top_k": 5,
-      "n_queries": 200,
-      "MRR": 0.5157,
-      "HitRatio@5": 0.63,
-      "mean_IoU_Top1": 0.2773,
-      "R@1_IoU0.3": 0.33,
-      "R@1_IoU0.5": 0.255,
-      "R@1_IoU0.7": 0.21,
-      "latency_mean_ms": 986.36
+      "n_queries": 13410,
+      "MRR": 0.4016,
+      "HitRatio@5": 0.536,
+      "mean_IoU_Top1": 0.1858,
+      "R@1_IoU0.3": 0.2306,
+      "R@1_IoU0.5": 0.1798,
+      "R@1_IoU0.7": 0.1373,
+      "latency_mean_ms": 1716.57
     },
     {
       "strategy": "both",
       "top_k": 5,
-      "n_queries": 200,
-      "MRR": 0.462,
-      "HitRatio@5": 0.655,
-      "mean_IoU_Top1": 0.2175,
-      "R@1_IoU0.3": 0.265,
-      "R@1_IoU0.5": 0.185,
-      "R@1_IoU0.7": 0.15,
-      "latency_mean_ms": 4673.93
+      "n_queries": 13410,
+      "MRR": 0.3174,
+      "HitRatio@5": 0.4934,
+      "mean_IoU_Top1": 0.1283,
+      "R@1_IoU0.3": 0.1595,
+      "R@1_IoU0.5": 0.1195,
+      "R@1_IoU0.7": 0.0906,
+      "latency_mean_ms": 4209.31
     },
     {
       "strategy": "heuristic",
       "top_k": 5,
-      "n_queries": 200,
-      "MRR": 0.3536,
-      "HitRatio@5": 0.46,
-      "mean_IoU_Top1": 0.1649,
-      "R@1_IoU0.3": 0.19,
-      "R@1_IoU0.5": 0.135,
-      "R@1_IoU0.7": 0.11,
-      "latency_mean_ms": 2171.02
+      "n_queries": 13410,
+      "MRR": 0.2273,
+      "HitRatio@5": 0.3391,
+      "mean_IoU_Top1": 0.0942,
+      "R@1_IoU0.3": 0.1164,
+      "R@1_IoU0.5": 0.0872,
+      "R@1_IoU0.7": 0.0642,
+      "latency_mean_ms": 2283.28
     }
   ]
 }

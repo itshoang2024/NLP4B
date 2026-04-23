@@ -1,0 +1,27 @@
+{
+  "strategy": "heuristic",
+  "batch": 0,
+  "total_batches": 4,
+  "api_url": "https://nlp4b.vercel.app",
+  "top_k": 5,
+  "total_queries": 13410,
+  "successful_queries": 510,
+  "failed_queries": 12900,
+  "empty_result_queries": 0,
+  "business_metrics": {
+    "error_rate_pct": 96.2,
+    "timeout_rate_pct": 0.0,
+    "empty_result_rate_pct": 0.0,
+    "latency_mean_ms": 2425.63,
+    "latency_p50_ms": 2238.85,
+    "latency_p95_ms": 3466.77,
+    "latency_p99_ms": 3779.77,
+    "latency_min_ms": 1968.43,
+    "latency_max_ms": 8690.5,
+    "network_overhead_mean_ms": 192.1,
+    "cold_start_rate_pct": 0.39,
+    "throughput_qps": 8.9832,
+    "total_runtime_sec": 1492.78
+  },
+  "timestamp": "2026-04-21T05:18:48.040077+00:00"
+}
